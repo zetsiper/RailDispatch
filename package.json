@@ -1,0 +1,13 @@
+{
+  "name": "rail-dispatch",
+  "version": "1.0.0",
+  "description": "Rail Dispatch locomotive crew scheduling and reporting application.",
+  "scripts": {
+    "dev": "vite --port 3000 --open",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^5.2.0"
+  }
+}

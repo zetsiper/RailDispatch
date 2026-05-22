@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RailDispatch - Интелигентен Оперативен Наряд на Локомотивни Бригади</title>
+  <meta name="description" content="Система за 24-часово оперативно планиране, управление и отчитане на локомотивни бригади в товарния железопътен транспорт в България.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="app-container">
+    
+    <!-- Странично меню (Sidebar) -->
+    <sidebar>
+      <div class="sidebar-top">
+        <div class="logo-container">
+          <div class="logo-icon">RD</div>
+          <div class="logo-text">
+            <h1>RailDispatch</h1>
+            <span>Оперативен пул</span>
+          </div>
+        </div>
+
+        <nav class="nav-menu">
+          <li class="nav-item active" data-tab="gantt-timeline">
+            <span>📊 Времева линия (Gantt)</span>
+          </li>
+          <li class="nav-item" data-tab="shift-manager">
+            <span>⚙️ Назначаване на смяна</span>
+          </li>
+          <li class="nav-item" data-tab="crew-profiles">
+            <span>👥 Локомотивни бригади</span>
+          </li>
+          <li class="nav-item" data-tab="train-settings">
+            <span>🚂 Шаблони на влакове</span>
+          </li>
+        </nav>
+      </div>
+
+      <!-- Диспечерски часовник -->
+      <div class="clock-widget">
+        <div class="clock-title">Диспечерско време</div>
+        <div class="clock-time" id="sim-clock-time">16:00ч</div>
+        <div class="clock-date" id="sim-clock-date">22 Май 2026г.</div>
+      </div>
+    </sidebar>
+
+    <!-- Основен панел -->
+    <main>
+      
+      <!-- Горен панел с контроли за симулация на времето -->
+      <div class="top-bar">
+        <div class="page-title">
+          <h2>Оперативен Диспечерски Пулт</h2>
+          <p>Планиране, следене на почивките и отчитане на локомотивни бригади</p>
+        </div>
+
+        <!-- Симулатор на времето -->
+        <div class="glass time-simulator-card">
+          <div class="simulator-controls">
+            <span class="simulator-label">⏳ Симулатор на времето за деня</span>
+            <div class="simulator-slider-wrapper">
+              <input type="range" id="sim-time-slider" min="0" max="1439" value="960" class="simulator-slider">
+              <span id="sim-time-slider-val" style="font-family: var(--font-mono); font-weight: 700; width: 60px;">16:00ч</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Статистическа лента -->
+      <div class="stats-strip">
+        <div class="glass stat-card">
+          <div class="stat-icon total">👥</div>
+          <div class="stat-info">
+            <span class="stat-value" id="stat-total">8</span>
+            <span class="stat-label">Общо персонал</span>
+          </div>
+        </div>
+        <div class="glass stat-card">
+          <div class="stat-icon available">🟢</div>
+          <div class="stat-info">
+            <span class="stat-value" id="stat-available">4</span>
+            <span class="stat-label">Свободни (Налични)</span>
+          </div>
+        </div>
+        <div class="glass stat-card">
+          <div class="stat-icon active">🟠</div>
+          <div class="stat-info">
+            <span class="stat-value" id="stat-active">1</span>
+            <span class="stat-label">На дежурство</span>
+          </div>
+        </div>
+        <div class="glass stat-card">
+          <div class="stat-icon absent">🔴</div>
+          <div class="stat-info">
+            <span class="stat-value" id="stat-absent">3</span>
+            <span class="stat-label">Отсъстващи / Почивка</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================== -->
+      <!-- ТАБ 1: 24-ЧАСОВ GANTT ЧАРТ -->
+      <!-- ============================================== -->
+      <div id="gantt-timeline" class="glass tab-content active timeline-wrapper">
+        <div class="timeline-header-actions">
+          <h3 style="font-size: 1.2rem; font-weight: 700;">24-часов графичен поглед на наряда</h3>
+          <div class="timeline-legend">
+            <div class="legend-item">
+              <span class="legend-color duty"></span>
+              <span>Дежурство / Влак</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-color rest"></span>
+              <span>16ч Задължителна почивка</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-color absence"></span>
+              <span>Болничен / Отпуск</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-color free"></span>
+              <span>Свободен</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="timeline-container">
+          <div class="timeline-grid" id="gantt-grid">
+            
+            <!-- Заглавен ред с часове (00:00 - 23:00) -->
+            <div class="timeline-hours-row">
+              <div class="corner-header">Локомотивен машинист</div>
+              <div class="hour-cell">00</div>
+              <div class="hour-cell">01</div>
+              <div class="hour-cell">02</div>
+              <div class="hour-cell">03</div>
+              <div class="hour-cell">04</div>
+              <div class="hour-cell">05</div>
+              <div class="hour-cell">06</div>
+              <div class="hour-cell">07</div>
+              <div class="hour-cell">08</div>
+              <div class="hour-cell">09</div>
+              <div class="hour-cell">10</div>
+              <div class="hour-cell">11</div>
+              <div class="hour-cell">12</div>
+              <div class="hour-cell">13</div>
+              <div class="hour-cell">14</div>
+              <div class="hour-cell">15</div>
+              <div class="hour-cell">16</div>
+              <div class="hour-cell">17</div>
+              <div class="hour-cell">18</div>
+              <div class="hour-cell">19</div>
+              <div class="hour-cell">20</div>
+              <div class="hour-cell">21</div>
+              <div class="hour-cell">22</div>
+              <div class="hour-cell">23</div>
+            </div>
+
+            <!-- Редовете за водачите се попълват динамично от JS -->
+
+          </div>
+        </div>
+        <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 12px;">
+          * Кликнете върху празно място на времевата линия на машинист, за да планирате смяна за него. Кликнете върху цветен блок за дежурство, за да го отчетете/затворите.
+        </p>
+      </div>
+
+      <!-- ============================================== -->
+      <!-- ТАБ 2: УПРАВЛЕНИЕ НА СМЕНИ И НАЗНАЧЕНИЯ -->
+      <!-- ============================================== -->
+      <div id="shift-manager" class="tab-content">
+        <div class="grid-two-cols">
+          
+          <!-- Форма за планиране -->
+          <div class="glass" style="display: flex; flex-direction: column;">
+            <div class="panel-header">
+              <h3>Планиране на ново дежурство</h3>
+            </div>
+            <div class="panel-body" style="flex-grow: 1;">
+              
+              <div class="form-group">
+                <label for="shift-planned-time">Планирано явяване на работа (Дата и час)</label>
+                <input type="datetime-local" id="shift-planned-time" required>
+              </div>
+
+              <div class="form-group">
+                <label for="shift-train-select">Влак / Задача</label>
+                <select id="shift-train-select" required>
+                  <!-- Динамично попълване -->
+                </select>
+              </div>
+
+              <!-- Бързи детайли за влака -->
+              <div class="glass" style="background: rgba(0,0,0,0.15); padding: 14px; border-radius: 10px; margin-bottom: 16px; font-size: 0.85rem;" id="train-route-info">
+                Изберете влак, за да видите маршрута му.
+              </div>
+
+              <div class="form-group">
+                <label for="shift-driver-select">Машинист</label>
+                <select id="shift-driver-select" required>
+                  <!-- Динамично попълване -->
+                </select>
+                <span style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-top: 4px;">
+                  * Персоналът в активен отпуск или болничен е скрит от списъка.
+                </span>
+              </div>
+
+              <!-- Бързи бутони / шаблони -->
+              <div style="margin-top: 24px;">
+                <h4 style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted); margin-bottom: 8px;">Бързи шаблони за редовни влакове:</h4>
+                <div class="templates-grid" id="quick-templates">
+                  <!-- Динамично рендиране на шаблони -->
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- Контролен панел за одобрение (Светофар) -->
+          <div class="glass approval-card" style="display: flex; flex-direction: column;">
+            <div class="panel-header">
+              <h3>Контролен панел за одобрение</h3>
+              <span style="font-size:0.75rem; color: var(--color-info); font-weight:700; border:1px solid rgba(59,130,246,0.3); padding:2px 8px; border-radius:12px;">Logic Engine</span>
+            </div>
+            
+            <div class="panel-body" style="display: flex; flex-direction: column; justify-content: space-between; flex-grow: 1; gap: 24px;">
+              
+              <div class="traffic-light-container">
+                
+                <!-- Светофар 1: Почивка -->
+                <div class="light-row" id="light-rest">
+                  <div class="light-circle off"></div>
+                  <div class="light-name">16ч Почивка (Твърдо)</div>
+                  <div class="light-desc">Изчаква се избор...</div>
+                </div>
+
+                <!-- Светофар 2: Правоспособност -->
+                <div class="light-row" id="light-competence">
+                  <div class="light-circle off"></div>
+                  <div class="light-name">Правоспособност (Твърдо)</div>
+                  <div class="light-desc">Изчаква се избор...</div>
+                </div>
+
+                <!-- Светофар 3: Ротация -->
+                <div class="light-row" id="light-rotation">
+                  <div class="light-circle off"></div>
+                  <div class="light-name">Ротация (Меко)</div>
+                  <div class="light-desc">Изчаква се избор...</div>
+                </div>
+
+                <!-- Светофар 4: Баланс часове -->
+                <div class="light-row" id="light-balance">
+                  <div class="light-circle off"></div>
+                  <div class="light-name">Баланси (Меко)</div>
+                  <div class="light-desc">Изчаква се избор...</div>
+                </div>
+
+              </div>
+
+              <!-- Бутон за финализиране -->
+              <div style="text-align: center;">
+                <button class="btn btn-success" id="btn-finalize-scheduling" style="width: 100%; padding: 14px;" disabled>
+                  ✅ Финализиране и Одобрение на Назначението
+                </button>
+                <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 8px;">
+                  * Системата забранява назначаване при нарушения на твърдите правила (16ч почивка или неправоспособност).
+                </p>
+              </div>
+
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Наскоро затворени/активни смени логинг на събития -->
+        <div class="glass" style="margin-top: 24px;">
+          <div class="panel-header">
+            <h3>Активни събития и оперативен лог</h3>
+          </div>
+          <div class="panel-body">
+            <div class="logs-list" id="operational-logs-list">
+              <!-- Извеждане на събитията -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================== -->
+      <!-- ТАБ 3: ЛОКОМОТИВНИ БРИГАДИ (ПРОФИЛИ) -->
+      <!-- ============================================== -->
+      <div id="crew-profiles" class="tab-content">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
+          <h3 style="font-size: 1.25rem; font-weight: 700;">База данни с локомотивни бригади</h3>
+        </div>
+        <div class="crew-grid" id="crew-profiles-list">
+          <!-- Картички с профили на машинисти -->
+        </div>
+      </div>
+
+      <!-- ============================================== -->
+      <!-- ТАБ 4: ШАБЛОНИ И НАСТРОЙКИ НА ВЛАКОВЕ -->
+      <!-- ============================================== -->
+      <div id="train-settings" class="glass tab-content">
+        <div class="panel-header">
+          <h3>Редактор на редовни товарни влакове (Шаблони)</h3>
+          <button class="btn btn-primary btn-sm" onclick="showTrainModal()">+ Добави нов влак</button>
+        </div>
+        <div class="panel-body">
+          <div class="trains-table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Влак ID</th>
+                  <th>Изисквана Серия</th>
+                  <th>Маршрут</th>
+                  <th>Планирано времетраене (ETA)</th>
+                  <th>Действия</th>
+                </tr>
+              </thead>
+              <tbody id="trains-table-body">
+                <!-- Списък с влакове -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- МОДАЛНИ ПРОЗОРЦИ (DIALOG MODALS) -->
+  <!-- ========================================== -->
+
+  <!-- Модал 1: Управление на Смяна (Отчитане, Закъснение, Отмяна) -->
+  <div class="modal-overlay" id="shift-modal">
+    <div class="glass modal-content">
+      <div class="modal-header">
+        <h3 id="modal-shift-title">Управление на дежурство</h3>
+        <button class="close-btn">&times;</button>
+      </div>
+      <div class="panel-body">
+        
+        <!-- Метаданни за дежурството -->
+        <div style="background: rgba(0,0,0,0.15); padding: 14px; border-radius: 10px; margin-bottom: 16px; font-size: 0.85rem; display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+          <div>👤 <strong>Машинист:</strong> <span id="modal-shift-driver">-</span></div>
+          <div>📍 <strong>Влак / Маршрут:</strong> <span id="modal-shift-route">-</span></div>
+          <div>📅 <strong>Планирано явяване:</strong> <span id="modal-shift-planned">-</span></div>
+          <div>⌛ <strong>Реално явяване:</strong> <span id="modal-shift-actual">-</span></div>
+        </div>
+
+        <!-- АКТИВНИ КОНТРОЛИ (За затваряне на смяна и събития) -->
+        <div id="modal-active-controls">
+          
+          <div class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 16px;">
+            <label style="font-weight: 700; color: var(--color-warning);">📝 Стъпка 1: Оперативно събитие / Промяна по време на път</label>
+            <div class="form-row" style="margin-top: 8px;">
+              <div>
+                <label for="modal-event-type">Тип промяна</label>
+                <select id="modal-event-type">
+                  <option value="delay">Закъснение</option>
+                  <option value="cancel">Отмяна на влак</option>
+                  <option value="reassign">Преназначаване</option>
+                </select>
+              </div>
+              <div>
+                <label for="modal-event-reason">Причина за промяна</label>
+                <select id="modal-event-reason">
+                  <option value="Локомотивна повреда">Локомотивна повреда</option>
+                  <option value="Закъснение на инфраструктурата">Закъснение на инфраструктурата</option>
+                  <option value="Липса на състав">Липса на състав</option>
+                  <option value="Превишено дежурство">Превишено дежурство</option>
+                  <option value="Друга">Друга</option>
+                </select>
+              </div>
+            </div>
+            <div style="margin-top: 10px;">
+              <label for="modal-event-note">Допълнително пояснение</label>
+              <textarea id="modal-event-note" placeholder="Опишете накратко детайлите..." rows="2"></textarea>
+            </div>
+            <button class="btn btn-secondary btn-sm" id="modal-save-event-btn" style="margin-top: 10px; width: 100%;">
+              ⚠️ Запиши само оперативното събитие
+            </button>
+          </div>
+
+          <div class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 16px; margin-top: 16px;">
+            <label style="font-weight: 700; color: var(--color-success);">🏁 Стъпка 2: Затваряне и Отчитане на смяната</label>
+            <div style="margin-top: 8px;">
+              <label for="modal-release-time">Реално време на освобождаване (Дата и час)</label>
+              <input type="datetime-local" id="modal-release-time" required>
+              <span style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-top: 4px;">
+                * Това е критичната точка за автоматично стартиране на 16-часовата задължителна почивка!
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ИНФОРМАЦИЯ ЗА ЗАТВОРЕНА СМЯНА -->
+        <div id="modal-inactive-controls" style="display: none;">
+          <div class="glass" style="background: rgba(16,185,129,0.05); padding: 14px; border-radius: 10px; border-color: rgba(16,185,129,0.2);" id="modal-shift-history">
+            Смяната е приключена и часовете са отчетени в баланса на служителя.
+          </div>
+        </div>
+
+      </div>
+      <div class="panel-header" style="justify-content: flex-end; gap: 12px; border-top: 1px solid var(--border-color); padding: 16px 24px;">
+        <button class="btn btn-secondary" onclick="document.getElementById('shift-modal').classList.remove('active')">Отказ</button>
+        <button class="btn btn-primary" id="modal-start-shift-btn" style="display: none;">▶️ Начало на Смяната</button>
+        <button class="btn btn-success" id="modal-close-shift-btn">🏁 Затвори и Отчети Смяна</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модал 2: Добавяне / Редактиране на Влак -->
+  <div class="modal-overlay" id="train-modal">
+    <div class="glass modal-content">
+      <div class="modal-header">
+        <h3 id="train-modal-title">Добавяне на Влак</h3>
+        <button class="close-btn">&times;</button>
+      </div>
+      <div class="panel-body">
+        
+        <div class="form-group">
+          <label for="modal-train-id">Номер / Име на Влак (уникален идентификатор)</label>
+          <input type="text" id="modal-train-id" placeholder="напр. Влак 40402" required>
+        </div>
+
+        <div class="form-group">
+          <label for="modal-train-series">Необходима Правоспособност (Серия локомотив)</label>
+          <select id="modal-train-series">
+            <option value="Серия 40 (вкл. 42/43/44/45)">Серия 40 (вкл. 42/43/44/45)</option>
+            <option value="Серия 46">Серия 46</option>
+            <option value="Серия 07">Серия 07</option>
+            <option value="Серия 51">Серия 51</option>
+            <option value="Серия 55">Серия 55</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="modal-train-route">Дефиниран Маршрут</label>
+          <input type="text" id="modal-train-route" placeholder="напр. Русе - Горна Оряховица" required>
+        </div>
+
+        <div class="form-group">
+          <label for="modal-train-eta">Планирано време по разписание (ETA в часове)</label>
+          <input type="number" id="modal-train-eta" min="0.5" max="24" step="0.5" value="4" required>
+        </div>
+
+      </div>
+      <div class="panel-header" style="justify-content: flex-end; gap: 12px; border-top: 1px solid var(--border-color); padding: 16px 24px;">
+        <button class="btn btn-secondary" onclick="document.getElementById('train-modal').classList.remove('active')">Отказ</button>
+        <button class="btn btn-primary" onclick="saveTrainTrigger()">💾 Запази Влак</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast контейнер за известия -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Скриптове -->
+  <script src="mockData.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
