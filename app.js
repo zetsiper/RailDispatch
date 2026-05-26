@@ -39,13 +39,36 @@ function initData() {
         migrated = true;
       }
       if (!driver.residence) {
-        driver.residence = driver.depot || "София";
+        driver.residence = driver.depot || "Русе";
+        migrated = true;
+      }
+      if (driver.competencies) {
+        driver.competencies = driver.competencies.map(c => {
+          if (c === "Серия 40 (вкл. 42/43/44/45)") {
+            migrated = true;
+            return "Серия 40";
+          }
+          return c;
+        });
+      }
+      const allowedDepots = ["Русе", "Плевен", "Горна Оряховица", "Каспичан"];
+      if (!allowedDepots.includes(driver.depot)) {
+        if (driver.depot === "София") driver.depot = "Русе";
+        else if (driver.depot === "Пловдив") driver.depot = "Плевен";
+        else driver.depot = "Русе";
         migrated = true;
       }
       if (migrated) {
         needsSave = true;
       }
       return driver;
+    });
+    state.trains = state.trains.map(train => {
+      if (train.series === "Серия 40 (вкл. 42/43/44/45)") {
+        train.series = "Серия 40";
+        needsSave = true;
+      }
+      return train;
     });
     if (needsSave) {
       saveToLocalStorage();
@@ -963,7 +986,7 @@ function showTrainModal(trainId = null) {
     title.textContent = "Добавяне на нов Влак";
     document.getElementById("modal-train-id").value = "";
     document.getElementById("modal-train-id").disabled = false;
-    document.getElementById("modal-train-series").value = "Серия 40 (вкл. 42/43/44/45)";
+    document.getElementById("modal-train-series").value = "Серия 40";
     document.getElementById("modal-train-route").value = "";
     document.getElementById("modal-train-eta").value = "4";
   }
@@ -1042,9 +1065,9 @@ function showCrewModal(driverId = null) {
       document.getElementById("modal-crew-middle-name").value = driver.middleName || "";
       document.getElementById("modal-crew-last-name").value = driver.lastName || "";
       document.getElementById("modal-crew-id").value = driver.id;
-      document.getElementById("modal-crew-id").disabled = true; // Забрана за промяна на ключа
+      document.getElementById("modal-crew-id").disabled = false; // Позволяваме редактиране на Табелен номер
       document.getElementById("modal-crew-position").value = driver.position || "Локомотивен машинист";
-      document.getElementById("modal-crew-depot").value = driver.depot || "София";
+      document.getElementById("modal-crew-depot").value = driver.depot || "Русе";
       document.getElementById("modal-crew-residence").value = driver.residence || "";
       document.getElementById("modal-crew-phone").value = driver.phone || "";
       
@@ -1066,7 +1089,7 @@ function showCrewModal(driverId = null) {
     document.getElementById("modal-crew-id").value = "";
     document.getElementById("modal-crew-id").disabled = false;
     document.getElementById("modal-crew-position").value = "Локомотивен машинист";
-    document.getElementById("modal-crew-depot").value = "София";
+    document.getElementById("modal-crew-depot").value = "Русе";
     document.getElementById("modal-crew-residence").value = "";
     document.getElementById("modal-crew-phone").value = "";
   }
@@ -1096,18 +1119,36 @@ function saveCrewTrigger() {
   const fullName = `${firstName} ${middleName} ${lastName}`.replace(/\s+/g, ' ').trim();
 
   if (editingCrewId) {
+    // Проверка дали новият табелен номер вече е зает от друг служител
+    if (id !== editingCrewId && state.drivers.some(d => d.id === id)) {
+      showToast("Служител с този табелен номер вече съществува!", "error");
+      return;
+    }
+
     // Редакция
     const driver = state.drivers.find(d => d.id === editingCrewId);
     if (driver) {
+      const oldId = driver.id;
       driver.firstName = firstName;
       driver.middleName = middleName;
       driver.lastName = lastName;
       driver.name = fullName;
+      driver.id = id; // Обновяваме табеления номер
       driver.position = position;
       driver.depot = depot;
       driver.residence = residence;
       driver.phone = phone;
       driver.competencies = competencies;
+
+      // Обновяване на всички смени, които препращат към стария табелен номер, за да се запази интегритетът на базата
+      if (oldId !== id) {
+        state.shifts.forEach(shift => {
+          if (shift.driverId === oldId) {
+            shift.driverId = id;
+          }
+        });
+      }
+
       showToast("Данните за служителя бяха актуализирани!", "success");
     }
   } else {
