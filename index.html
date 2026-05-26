@@ -293,6 +293,7 @@
       <div id="crew-profiles" class="tab-content">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
           <h3 style="font-size: 1.25rem; font-weight: 700;">База данни с локомотивни бригади</h3>
+          <button class="btn btn-primary btn-sm" onclick="showCrewModal()">+ Добави служител</button>
         </div>
         <div class="crew-grid" id="crew-profiles-list">
           <!-- Картички с профили на машинисти -->
@@ -434,7 +435,7 @@
             <option value="Серия 46">Серия 46</option>
             <option value="Серия 07">Серия 07</option>
             <option value="Серия 51">Серия 51</option>
-            <option value="Серия 55">Серия 55</option>
+            <option value="Серия 55">Series 55</option>
           </select>
         </div>
 
@@ -452,6 +453,111 @@
       <div class="panel-header" style="justify-content: flex-end; gap: 12px; border-top: 1px solid var(--border-color); padding: 16px 24px;">
         <button class="btn btn-secondary" onclick="document.getElementById('train-modal').classList.remove('active')">Отказ</button>
         <button class="btn btn-primary" onclick="saveTrainTrigger()">💾 Запази Влак</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модал 3: Добавяне / Редактиране на Служител -->
+  <div class="modal-overlay" id="crew-modal">
+    <div class="glass modal-content">
+      <div class="modal-header">
+        <h3 id="crew-modal-title">Добавяне на Служител</h3>
+        <button class="close-btn">&times;</button>
+      </div>
+      <div class="panel-body" style="max-height: 70vh; overflow-y: auto;">
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+          <div class="form-group">
+            <label for="modal-crew-first-name">Име</label>
+            <input type="text" id="modal-crew-first-name" placeholder="Име" required>
+          </div>
+          <div class="form-group">
+            <label for="modal-crew-middle-name">Презиме</label>
+            <input type="text" id="modal-crew-middle-name" placeholder="Презиме" required>
+          </div>
+          <div class="form-group">
+            <label for="modal-crew-last-name">Фамилия</label>
+            <input type="text" id="modal-crew-last-name" placeholder="Фамилия" required>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="form-group">
+            <label for="modal-crew-id">Табелен Номер</label>
+            <input type="text" id="modal-crew-id" placeholder="напр. 1009" required>
+          </div>
+          <div class="form-group">
+            <label for="modal-crew-position">Длъжност</label>
+            <select id="modal-crew-position">
+              <option value="Локомотивен машинист">Локомотивен машинист</option>
+              <option value="Помощник-локомотивен машинист">Помощник-локомотивен машинист</option>
+              <option value="Инструктор/Депомайстор">Инструктор/Депомайстор</option>
+              <option value="Маневрист">Маневрист</option>
+              <option value="Стрелочник">Стрелочник</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="form-group">
+            <label for="modal-crew-depot">Местоназначение (Депо)</label>
+            <select id="modal-crew-depot">
+              <option value="София">София</option>
+              <option value="Пловдив">Пловдив</option>
+              <option value="Русе">Русе</option>
+              <option value="Горна Оряховица">Горна Оряховица</option>
+              <option value="Бургас">Бургас</option>
+              <option value="Варна">Варна</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="modal-crew-residence">Местоживеене</label>
+            <input type="text" id="modal-crew-residence" placeholder="напр. София" required>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="modal-crew-phone">Телефон за връзка</label>
+          <input type="text" id="modal-crew-phone" placeholder="напр. 0888 123 456" required>
+        </div>
+
+        <div class="form-group">
+          <label style="font-weight: 700; margin-bottom: 6px; display: block;">Притежавани правоспособности и роли</label>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid var(--border-color);">
+            <label style="display:flex; align-items:center; gap:8px; font-weight:normal; cursor:pointer;">
+              <input type="checkbox" name="competency" value="Серия 40 (вкл. 42/43/44/45)"> Серия 40 (вкл. 42/43/44/45)
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; font-weight:normal; cursor:pointer;">
+              <input type="checkbox" name="competency" value="Серия 46"> Серия 46
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; font-weight:normal; cursor:pointer;">
+              <input type="checkbox" name="competency" value="Серия 07"> Серия 07
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; font-weight:normal; cursor:pointer;">
+              <input type="checkbox" name="competency" value="Серия 51"> Серия 51
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; font-weight:normal; cursor:pointer;">
+              <input type="checkbox" name="competency" value="Серия 55"> Серия 55
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; font-weight:normal; cursor:pointer;">
+              <input type="checkbox" name="competency" value="Проба &quot;А&quot;"> Проба "А"
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; font-weight:normal; cursor:pointer;">
+              <input type="checkbox" name="competency" value="ТМРВ"> ТМРВ
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; font-weight:normal; cursor:pointer;">
+              <input type="checkbox" name="competency" value="Инструктор/Депомайстор"> Инструктор/Депомайстор
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; font-weight:normal; cursor:pointer;">
+              <input type="checkbox" name="competency" value="Стрелочник"> Стрелочник
+            </label>
+          </div>
+        </div>
+
+      </div>
+      <div class="panel-header" style="justify-content: flex-end; gap: 12px; border-top: 1px solid var(--border-color); padding: 16px 24px;">
+        <button class="btn btn-secondary" onclick="document.getElementById('crew-modal').classList.remove('active')">Отказ</button>
+        <button class="btn btn-primary" onclick="saveCrewTrigger()">💾 Запази служител</button>
       </div>
     </div>
   </div>

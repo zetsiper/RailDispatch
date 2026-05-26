@@ -22,6 +22,34 @@ function initData() {
     state.drivers = JSON.parse(storedDrivers);
     state.trains = JSON.parse(storedTrains);
     state.shifts = JSON.parse(storedShifts);
+    
+    // Миграция за нови полета на локомотивен персонал
+    let needsSave = false;
+    state.drivers = state.drivers.map(driver => {
+      let migrated = false;
+      if (!driver.firstName || !driver.lastName) {
+        const parts = (driver.name || "").split(/\s+/);
+        driver.firstName = parts[0] || "";
+        driver.middleName = parts[1] || "";
+        driver.lastName = parts.slice(2).join(" ") || "";
+        migrated = true;
+      }
+      if (!driver.position) {
+        driver.position = driver.id === "1005" ? "Инструктор/Депомайстор" : (driver.id === "1006" ? "Помощник-локомотивен машинист" : "Локомотивен машинист");
+        migrated = true;
+      }
+      if (!driver.residence) {
+        driver.residence = driver.depot || "София";
+        migrated = true;
+      }
+      if (migrated) {
+        needsSave = true;
+      }
+      return driver;
+    });
+    if (needsSave) {
+      saveToLocalStorage();
+    }
   } else {
     // Използваме подготвените данни от mockData.js (ако са достъпни)
     state.drivers = typeof DEFAULT_DRIVERS !== 'undefined' ? DEFAULT_DRIVERS : [];
@@ -591,15 +619,27 @@ function renderCrewProfiles() {
       }).join("");
     }
 
+    const fullName = `${driver.firstName || ""} ${driver.middleName || ""} ${driver.lastName || ""}`.trim() || driver.name || "Няма име";
+
     card.innerHTML = `
       <div class="crew-card-header">
-        <div class="crew-card-name">${driver.name}</div>
+        <div class="crew-card-name">${fullName}</div>
         <div class="crew-card-depot">Депо ${driver.depot}</div>
       </div>
       
       <div class="crew-info-row">
         <span class="crew-info-label">Табелен номер:</span>
         <span class="crew-info-value">#${driver.id}</span>
+      </div>
+
+      <div class="crew-info-row">
+        <span class="crew-info-label">Длъжност:</span>
+        <span class="crew-info-value">${driver.position || "Машинист"}</span>
+      </div>
+
+      <div class="crew-info-row">
+        <span class="crew-info-label">Местоживеене:</span>
+        <span class="crew-info-value">${driver.residence || driver.depot}</span>
       </div>
       
       <div class="crew-info-row">
@@ -608,8 +648,8 @@ function renderCrewProfiles() {
       </div>
 
       <div class="crew-info-row">
-        <span class="crew-info-label">Правоспособност:</span>
-        <span class="crew-info-value">${driver.competencies.join(", ")}</span>
+        <span class="crew-info-label">Компетенции:</span>
+        <span class="crew-info-value" style="text-align: right; max-width: 60%;">${driver.competencies.join(", ")}</span>
       </div>
 
       ${activeAbsenceHTML}
@@ -632,6 +672,11 @@ function renderCrewProfiles() {
         <div class="progress-bar-bg">
           <div class="progress-bar-fill ${qBarClass}" style="width: ${qPct}%"></div>
         </div>
+      </div>
+
+      <div class="crew-card-actions">
+        <button class="btn-icon" onclick="showCrewModal('${driver.id}')">✏️ Редактиране</button>
+        <button class="btn-icon btn-icon-danger" onclick="deleteCrew('${driver.id}')">❌ Изтриване</button>
       </div>
     `;
 
@@ -970,6 +1015,148 @@ function deleteTrainTrigger(trainId) {
     state.trains = state.trains.filter(t => t.id !== trainId);
     saveToLocalStorage();
     showToast("Влакът бе изтрит от списъка.", "warning");
+    updateUI();
+  }
+}
+
+// ==========================================
+// УПРАВЛЕНИЕ НА ЛОКОМОТИВЕН ПЕРСОНАЛ (CRUD)
+// ==========================================
+
+let editingCrewId = null;
+
+function showCrewModal(driverId = null) {
+  const modal = document.getElementById("crew-modal");
+  const title = document.getElementById("crew-modal-title");
+  
+  // Изчистване на чекбоксовете
+  const checkboxes = document.querySelectorAll("#crew-modal input[name='competency']");
+  checkboxes.forEach(cb => cb.checked = false);
+
+  if (driverId) {
+    editingCrewId = driverId;
+    title.textContent = "Редактиране на Служител";
+    const driver = state.drivers.find(d => d.id === driverId);
+    if (driver) {
+      document.getElementById("modal-crew-first-name").value = driver.firstName || "";
+      document.getElementById("modal-crew-middle-name").value = driver.middleName || "";
+      document.getElementById("modal-crew-last-name").value = driver.lastName || "";
+      document.getElementById("modal-crew-id").value = driver.id;
+      document.getElementById("modal-crew-id").disabled = true; // Забрана за промяна на ключа
+      document.getElementById("modal-crew-position").value = driver.position || "Локомотивен машинист";
+      document.getElementById("modal-crew-depot").value = driver.depot || "София";
+      document.getElementById("modal-crew-residence").value = driver.residence || "";
+      document.getElementById("modal-crew-phone").value = driver.phone || "";
+      
+      // Запълване на чекбоксовете за компетенции
+      if (driver.competencies) {
+        checkboxes.forEach(cb => {
+          if (driver.competencies.includes(cb.value)) {
+            cb.checked = true;
+          }
+        });
+      }
+    }
+  } else {
+    editingCrewId = null;
+    title.textContent = "Добавяне на Служител";
+    document.getElementById("modal-crew-first-name").value = "";
+    document.getElementById("modal-crew-middle-name").value = "";
+    document.getElementById("modal-crew-last-name").value = "";
+    document.getElementById("modal-crew-id").value = "";
+    document.getElementById("modal-crew-id").disabled = false;
+    document.getElementById("modal-crew-position").value = "Локомотивен машинист";
+    document.getElementById("modal-crew-depot").value = "София";
+    document.getElementById("modal-crew-residence").value = "";
+    document.getElementById("modal-crew-phone").value = "";
+  }
+  
+  modal.classList.add("active");
+}
+
+function saveCrewTrigger() {
+  const firstName = document.getElementById("modal-crew-first-name").value.trim();
+  const middleName = document.getElementById("modal-crew-middle-name").value.trim();
+  const lastName = document.getElementById("modal-crew-last-name").value.trim();
+  const id = document.getElementById("modal-crew-id").value.trim();
+  const position = document.getElementById("modal-crew-position").value;
+  const depot = document.getElementById("modal-crew-depot").value;
+  const residence = document.getElementById("modal-crew-residence").value.trim();
+  const phone = document.getElementById("modal-crew-phone").value.trim();
+
+  if (!firstName || !lastName || !id || !residence || !phone) {
+    showToast("Всички полета са задължителни (без презиме)!", "error");
+    return;
+  }
+
+  // Вземане на избраните правоспособности
+  const checkboxes = document.querySelectorAll("#crew-modal input[name='competency']:checked");
+  const competencies = Array.from(checkboxes).map(cb => cb.value);
+
+  const fullName = `${firstName} ${middleName} ${lastName}`.replace(/\s+/g, ' ').trim();
+
+  if (editingCrewId) {
+    // Редакция
+    const driver = state.drivers.find(d => d.id === editingCrewId);
+    if (driver) {
+      driver.firstName = firstName;
+      driver.middleName = middleName;
+      driver.lastName = lastName;
+      driver.name = fullName;
+      driver.position = position;
+      driver.depot = depot;
+      driver.residence = residence;
+      driver.phone = phone;
+      driver.competencies = competencies;
+      showToast("Данните за служителя бяха актуализирани!", "success");
+    }
+  } else {
+    // Нов служител
+    if (state.drivers.some(d => d.id === id)) {
+      showToast("Служител с този табелен номер вече съществува!", "error");
+      return;
+    }
+    const newDriver = {
+      id,
+      firstName,
+      middleName,
+      lastName,
+      name: fullName,
+      phone,
+      depot,
+      position,
+      residence,
+      competencies,
+      monthlyNorm: 160,
+      quarterlyNorm: 480,
+      monthlyWorked: 0,
+      quarterlyWorked: 0,
+      absences: []
+    };
+    state.drivers.push(newDriver);
+    showToast("Новият служител бе добавен успешно!", "success");
+  }
+
+  saveToLocalStorage();
+  document.getElementById("crew-modal").classList.remove("active");
+  updateUI();
+}
+
+function deleteCrew(driverId) {
+  // Проверка за активни или планирани смени
+  const activeOrPlannedShifts = state.shifts.filter(s => s.driverId === driverId && (s.status === 'active' || s.status === 'planned'));
+  if (activeOrPlannedShifts.length > 0) {
+    showToast("Не можете да изтриете служител с планирани или активни смени!", "error");
+    return;
+  }
+
+  const driver = state.drivers.find(d => d.id === driverId);
+  const fullName = driver ? `${driver.firstName} ${driver.lastName}` : driverId;
+
+  if (confirm(`Сигурни ли сте, че искате да изтриете служител ${fullName} (Табелен № ${driverId})?`)) {
+    state.drivers = state.drivers.filter(d => d.id !== driverId);
+    saveToLocalStorage();
+    showToast("Служителят бе премахнат от базата данни.", "warning");
     updateUI();
   }
 }
