@@ -42,6 +42,10 @@ function initData() {
         driver.residence = driver.depot || "Русе";
         migrated = true;
       }
+      if (!driver.phones) {
+        driver.phones = driver.phone ? [{ number: driver.phone, description: "Личен" }] : [];
+        migrated = true;
+      }
       if (driver.competencies) {
         driver.competencies = driver.competencies.map(c => {
           if (c === "Серия 40 (вкл. 42/43/44/45)") {
@@ -644,7 +648,31 @@ function renderCrewProfiles() {
 
     const fullName = `${driver.firstName || ""} ${driver.middleName || ""} ${driver.lastName || ""}`.trim() || driver.name || "Няма име";
 
-    card.innerHTML = `
+      // Динамично рендиране на всички телефони за връзка с техните описания
+      let phonesHTML = "";
+      if (driver.phones && driver.phones.length > 0) {
+        phonesHTML = driver.phones.map(p => {
+          return `
+          <div style="display:flex; justify-content:space-between; width: 100%; font-size: 0.75rem; color: #fff; margin-bottom: 2px;">
+            <span style="color: var(--text-muted);">${p.description || "Личен"}:</span>
+            <span style="font-weight: 500;">${p.number}</span>
+          </div>`;
+        }).join("");
+      } else if (driver.phone) {
+        phonesHTML = `
+        <div style="display:flex; justify-content:space-between; width: 100%; font-size: 0.75rem; color: #fff; margin-bottom: 2px;">
+          <span style="color: var(--text-muted);">Личен:</span>
+          <span style="font-weight: 500;">${driver.phone}</span>
+        </div>`;
+      } else {
+        phonesHTML = `
+        <div style="display:flex; justify-content:space-between; width: 100%; font-size: 0.75rem; color: #fff; margin-bottom: 2px;">
+          <span style="color: var(--text-muted);">Телефон:</span>
+          <span style="font-weight: 500;">-</span>
+        </div>`;
+      }
+
+      card.innerHTML = `
       <div class="crew-card-header">
         <div class="crew-card-name">${fullName}</div>
         <div class="crew-card-depot">Депо ${driver.depot}</div>
@@ -665,9 +693,9 @@ function renderCrewProfiles() {
         <span class="crew-info-value">${driver.residence || driver.depot}</span>
       </div>
       
-      <div class="crew-info-row">
-        <span class="crew-info-label">Телефон:</span>
-        <span class="crew-info-value">${driver.phone}</span>
+      <div class="crew-info-row" style="flex-direction: column; align-items: flex-start; gap: 4px; border-bottom: 1px solid rgba(255,255,255,0.03); padding-bottom: 6px;">
+        <span class="crew-info-label" style="margin-bottom: 2px;">Телефони за връзка:</span>
+        ${phonesHTML}
       </div>
 
       <div class="crew-info-row">
@@ -1048,6 +1076,25 @@ function deleteTrainTrigger(trainId) {
 
 let editingCrewId = null;
 
+function addPhoneRowInput(number = "", description = "") {
+  const container = document.getElementById("modal-crew-phones-container");
+  if (!container) return;
+
+  const row = document.createElement("div");
+  row.className = "phone-row";
+  row.style.display = "flex";
+  row.style.gap = "8px";
+  row.style.alignItems = "center";
+  row.style.marginBottom = "6px";
+
+  row.innerHTML = `
+    <input type="text" placeholder="напр. 0888 123 456" class="phone-number" value="${number}" required style="flex: 1.2; background: rgba(0,0,0,0.2); border: 1px solid var(--border-color); color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 0.85rem;">
+    <input type="text" placeholder="Пояснение (напр. Личен, Служебен)" class="phone-desc" value="${description}" required style="flex: 1; background: rgba(0,0,0,0.2); border: 1px solid var(--border-color); color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 0.85rem;">
+    <button type="button" class="btn-icon btn-icon-danger" onclick="this.parentElement.remove()" style="padding: 6px; flex: 0 0 auto; min-height: 32px;">❌</button>
+  `;
+  container.appendChild(row);
+}
+
 function showCrewModal(driverId = null) {
   const modal = document.getElementById("crew-modal");
   const title = document.getElementById("crew-modal-title");
@@ -1055,6 +1102,10 @@ function showCrewModal(driverId = null) {
   // Изчистване на чекбоксовете
   const checkboxes = document.querySelectorAll("#crew-modal input[name='competency']");
   checkboxes.forEach(cb => cb.checked = false);
+
+  // Изчистване на контейнера за телефони
+  const phonesContainer = document.getElementById("modal-crew-phones-container");
+  if (phonesContainer) phonesContainer.innerHTML = "";
 
   if (driverId) {
     editingCrewId = driverId;
@@ -1069,8 +1120,16 @@ function showCrewModal(driverId = null) {
       document.getElementById("modal-crew-position").value = driver.position || "Локомотивен машинист";
       document.getElementById("modal-crew-depot").value = driver.depot || "Русе";
       document.getElementById("modal-crew-residence").value = driver.residence || "";
-      document.getElementById("modal-crew-phone").value = driver.phone || "";
       
+      // Запълване на телефоните
+      if (driver.phones && driver.phones.length > 0) {
+        driver.phones.forEach(p => addPhoneRowInput(p.number, p.description));
+      } else if (driver.phone) {
+        addPhoneRowInput(driver.phone, "Личен");
+      } else {
+        addPhoneRowInput("", "Личен");
+      }
+
       // Запълване на чекбоксовете за компетенции
       if (driver.competencies) {
         checkboxes.forEach(cb => {
@@ -1091,7 +1150,9 @@ function showCrewModal(driverId = null) {
     document.getElementById("modal-crew-position").value = "Локомотивен машинист";
     document.getElementById("modal-crew-depot").value = "Русе";
     document.getElementById("modal-crew-residence").value = "";
-    document.getElementById("modal-crew-phone").value = "";
+    
+    // Първи празен ред за телефон по подразбиране
+    addPhoneRowInput("", "Личен");
   }
   
   modal.classList.add("active");
@@ -1105,10 +1166,25 @@ function saveCrewTrigger() {
   const position = document.getElementById("modal-crew-position").value;
   const depot = document.getElementById("modal-crew-depot").value;
   const residence = document.getElementById("modal-crew-residence").value.trim();
-  const phone = document.getElementById("modal-crew-phone").value.trim();
 
-  if (!firstName || !lastName || !id || !residence || !phone) {
+  // Събиране на телефоните
+  const phoneRows = document.querySelectorAll("#modal-crew-phones-container .phone-row");
+  const phones = [];
+  phoneRows.forEach(row => {
+    const number = row.querySelector(".phone-number").value.trim();
+    const description = row.querySelector(".phone-desc").value.trim();
+    if (number) {
+      phones.push({ number, description: description || "Пояснение" });
+    }
+  });
+
+  if (!firstName || !lastName || !id || !residence) {
     showToast("Всички полета са задължителни (без презиме)!", "error");
+    return;
+  }
+
+  if (phones.length === 0) {
+    showToast("Моля, въведете поне един телефон за връзка!", "error");
     return;
   }
 
@@ -1137,7 +1213,8 @@ function saveCrewTrigger() {
       driver.position = position;
       driver.depot = depot;
       driver.residence = residence;
-      driver.phone = phone;
+      driver.phones = phones;
+      driver.phone = phones[0].number; // съвместимост назад
       driver.competencies = competencies;
 
       // Обновяване на всички смени, които препращат към стария табелен номер, за да се запази интегритетът на базата
@@ -1163,7 +1240,8 @@ function saveCrewTrigger() {
       middleName,
       lastName,
       name: fullName,
-      phone,
+      phones,
+      phone: phones[0].number, // съвместимост назад
       depot,
       position,
       residence,

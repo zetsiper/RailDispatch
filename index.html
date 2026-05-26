@@ -515,8 +515,11 @@
         </div>
 
         <div class="form-group">
-          <label for="modal-crew-phone">Телефон за връзка</label>
-          <input type="text" id="modal-crew-phone" placeholder="напр. 0888 123 456" required>
+          <label style="font-weight: 700; margin-bottom: 6px; display: block;">Телефони за връзка</label>
+          <div id="modal-crew-phones-container" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
+            <!-- Динамични редове за телефони -->
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="addPhoneRowInput()" style="padding: 4px 10px; font-size: 0.75rem; margin-top: 4px;">+ Добави друг телефон</button>
         </div>
 
         <div class="form-group">
@@ -548,6 +551,12 @@
             </label>
             <label style="display:flex; align-items:center; gap:8px; font-weight:normal; cursor:pointer;">
               <input type="checkbox" name="competency" value="Стрелочник"> Стрелочник
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; font-weight:normal; cursor:pointer;">
+              <input type="checkbox" name="competency" value="Помощник ел."> Помощник ел.
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; font-weight:normal; cursor:pointer;">
+              <input type="checkbox" name="competency" value="Помощник диз."> Помощник диз.
             </label>
           </div>
         </div>
