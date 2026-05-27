@@ -5,6 +5,9 @@ let state = {
   drivers: [],
   trains: [],
   shifts: [],
+  positionNorms: {},
+  assignations: [],
+  assigningCell: null,
   // Текущо диспечерско време за симулацията: 22 Май 2026г.
   currentDateStr: "2026-05-22",
   currentHour: 16, // по подразбиране е 16:00
@@ -17,12 +20,23 @@ function initData() {
   const storedTrains = localStorage.getItem("dispatch_trains");
   const storedShifts = localStorage.getItem("dispatch_shifts");
   const storedTime = localStorage.getItem("dispatch_sim_time");
+  const storedAssignations = localStorage.getItem("dispatch_assignations");
+
+  const storedNorms = localStorage.getItem("dispatch_position_norms");
 
   if (storedDrivers && storedTrains && storedShifts) {
     state.drivers = JSON.parse(storedDrivers);
     state.trains = JSON.parse(storedTrains);
     state.shifts = JSON.parse(storedShifts);
+    if (storedAssignations) state.assignations = JSON.parse(storedAssignations);
     
+    // Зареждане на норми по длъжности
+    if (storedNorms) {
+      state.positionNorms = JSON.parse(storedNorms);
+    } else {
+      state.positionNorms = typeof DEFAULT_POSITION_NORMS !== 'undefined' ? {...DEFAULT_POSITION_NORMS} : {};
+    }
+
     // Миграция за нови полета на локомотивен персонал
     let needsSave = false;
     state.drivers = state.drivers.map(driver => {
@@ -62,6 +76,31 @@ function initData() {
         else driver.depot = "Русе";
         migrated = true;
       }
+      // Миграция за нови полета на отсъствия
+      if (driver.absences) {
+        driver.absences = driver.absences.map(abs => {
+          if (abs.requested === undefined) abs.requested = true;
+          if (abs.approved === undefined) abs.approved = false;
+          if (abs.presented === undefined) abs.presented = false;
+          if (abs.explanation === undefined) abs.explanation = "";
+          return abs;
+        });
+      }
+      if (driver.yearlyNorm === undefined) {
+        driver.yearlyNorm = 1920;
+        migrated = true;
+      }
+      if (driver.yearlyWorked === undefined) {
+        driver.yearlyWorked = driver.quarterlyWorked ? driver.quarterlyWorked * 4 : 0;
+        migrated = true;
+      }
+      // Подсигуряване на норми според длъжността
+      if (state.positionNorms && state.positionNorms[driver.position] && driver.monthlyNorm !== state.positionNorms[driver.position]) {
+        driver.monthlyNorm = state.positionNorms[driver.position];
+        driver.quarterlyNorm = driver.monthlyNorm * 3;
+        driver.yearlyNorm = driver.monthlyNorm * 12;
+        migrated = true;
+      }
       if (migrated) {
         needsSave = true;
       }
@@ -82,6 +121,7 @@ function initData() {
     state.drivers = typeof DEFAULT_DRIVERS !== 'undefined' ? DEFAULT_DRIVERS : [];
     state.trains = typeof DEFAULT_TRAINS !== 'undefined' ? DEFAULT_TRAINS : [];
     state.shifts = typeof DEFAULT_SHIFTS !== 'undefined' ? DEFAULT_SHIFTS : [];
+    state.positionNorms = typeof DEFAULT_POSITION_NORMS !== 'undefined' ? {...DEFAULT_POSITION_NORMS} : {};
     saveToLocalStorage();
   }
 
@@ -96,6 +136,8 @@ function saveToLocalStorage() {
   localStorage.setItem("dispatch_drivers", JSON.stringify(state.drivers));
   localStorage.setItem("dispatch_trains", JSON.stringify(state.trains));
   localStorage.setItem("dispatch_shifts", JSON.stringify(state.shifts));
+  localStorage.setItem("dispatch_assignations", JSON.stringify(state.assignations));
+  localStorage.setItem("dispatch_position_norms", JSON.stringify(state.positionNorms));
   localStorage.setItem("dispatch_sim_time", JSON.stringify({ hour: state.currentHour, minute: state.currentMinute }));
 }
 
@@ -109,6 +151,30 @@ function formatTime(dateOrStr) {
   if (!dateOrStr) return "-";
   const date = new Date(dateOrStr);
   return date.toLocaleTimeString('bg-BG', { hour: '2-digit', minute: '2-digit' }) + 'ч';
+}
+
+function getAssignedDriverIdsOnDate(dateStr) {
+  const assigned = new Set();
+  const pad = n => String(n).padStart(2, "0");
+  // Проверка в shifts (appearancePlanned съдържа ISO дата)
+  state.shifts.forEach(s => {
+    const shiftDate = new Date(s.appearancePlanned);
+    const shiftDateStr = `${shiftDate.getFullYear()}-${pad(shiftDate.getMonth()+1)}-${pad(shiftDate.getDate())}`;
+    if (shiftDateStr === dateStr && s.status !== 'cancelled') {
+      assigned.add(s.driverId);
+    }
+  });
+  // Проверка в assignations (винаги за следващия ден спрямо currentDateStr)
+  const nextDate = new Date(state.currentDateStr);
+  nextDate.setDate(nextDate.getDate() + 1);
+  const nextDateStr = `${nextDate.getFullYear()}-${pad(nextDate.getMonth()+1)}-${pad(nextDate.getDate())}`;
+  if (dateStr === nextDateStr) {
+    state.assignations.forEach(a => {
+      if (a.driverId) assigned.add(a.driverId);
+      if (a.assistantId) assigned.add(a.assistantId);
+    });
+  }
+  return assigned;
 }
 
 function formatDate(dateOrStr) {
@@ -145,17 +211,27 @@ function checkBusinessRules(driverId, trainId, appearanceTimeStr) {
 
   const plannedTime = new Date(appearanceTimeStr);
 
-  // --- Правило 4: Отсъствия и Отпуски (Твърдо) ---
+  // --- Правило 4: Отсъствия и Отпуски ---
+  // Проверка за отсъствие в планираното време
   for (const absence of driver.absences) {
     const absStart = new Date(absence.start);
     const absEnd = new Date(absence.end);
     if (plannedTime >= absStart && plannedTime <= absEnd) {
-      result.rest = { 
-        status: "red", 
-        text: `Недостъпен - В отпуск или болничен (${absence.typeBG}) до ${formatDate(absEnd)}.` 
-      };
-      // Ако е в отпуск, той е абсолютно блокиран
-      return result;
+      const behavior = getAbsenceBehavior(absence);
+      if (behavior.blockLevel === 'block') {
+        result.rest = { 
+          status: "red", 
+          text: `Недостъпен - ${behavior.label} до ${formatDate(absEnd)}.` 
+        };
+        return result;
+      } else {
+        result.rest = { 
+          status: "yellow", 
+          text: `⚠️ Предупреждение - ${behavior.label} до ${formatDate(absEnd)}.` 
+        };
+        // Не прекъсваме - проверяваме и другите правила
+        break;
+      }
     }
   }
 
@@ -238,6 +314,55 @@ function checkBusinessRules(driverId, trainId, appearanceTimeStr) {
   return result;
 }
 
+/**
+ * Определя поведението на дадено отсъствие: цвят за показване и ниво на блокиране.
+ * @returns {{ blockLevel: 'block'|'warn'|'none', colorClass: string, label: string }}
+ */
+function getAbsenceBehavior(absence) {
+  if (absence.type === 'Vacation') {
+    if (absence.approved) {
+      return { blockLevel: 'block', colorClass: 'absence-vacation-approved', label: 'Платен отпуск (Одобрен)' };
+    }
+    return { blockLevel: 'warn', colorClass: 'absence-vacation-requested', label: 'Платен отпуск (Заявен)' };
+  }
+  if (absence.type === 'Sick') {
+    if (absence.presented) {
+      return { blockLevel: 'block', colorClass: 'absence-sick-presented', label: 'Медицински отпуск (Представен)' };
+    }
+    return { blockLevel: 'block', colorClass: 'absence-sick-requested', label: 'Медицински отпуск (Заявен)' };
+  }
+  if (absence.type === 'Service') {
+    return { blockLevel: 'block', colorClass: 'absence-service', label: 'Служебна ангажираност' };
+  }
+  if (absence.type === 'Personal') {
+    return { blockLevel: 'warn', colorClass: 'absence-personal', label: 'Лична ангажираност' };
+  }
+  return { blockLevel: 'block', colorClass: 'absence', label: absence.typeBG || 'Отсъствие' };
+}
+
+function onAbsenceTypeChange() {
+  const type = document.getElementById('modal-absence-type').value;
+  const checkSection = document.getElementById('absence-checkboxes-section');
+  const explSection = document.getElementById('absence-explanation-section');
+  const approvedLabel = document.getElementById('absence-approved-label');
+  const presentedLabel = document.getElementById('absence-presented-label');
+
+  if (type === 'Vacation' || type === 'Sick') {
+    checkSection.style.display = 'block';
+    explSection.style.display = 'none';
+    if (type === 'Vacation') {
+      approvedLabel.style.display = 'flex';
+      presentedLabel.style.display = 'none';
+    } else {
+      approvedLabel.style.display = 'none';
+      presentedLabel.style.display = 'flex';
+    }
+  } else {
+    checkSection.style.display = 'none';
+    explSection.style.display = 'block';
+  }
+}
+
 // ==========================================
 // УПРАВЛЕНИЕ НА ДЕЖУРСТВАТА (СЪБИТИЯ)
 // ==========================================
@@ -300,6 +425,7 @@ function closeShift(shiftId, releaseTime) {
     if (driver) {
       driver.monthlyWorked = parseFloat((driver.monthlyWorked + durationHours).toFixed(2));
       driver.quarterlyWorked = parseFloat((driver.quarterlyWorked + durationHours).toFixed(2));
+      driver.yearlyWorked = parseFloat((driver.yearlyWorked + durationHours).toFixed(2));
     }
 
     saveToLocalStorage();
@@ -483,12 +609,18 @@ function renderGanttTimeline() {
         const leftPercent = ((startLimit - dayStart) / (24 * 60 * 60 * 1000)) * 100;
         const widthPercent = ((endLimit - startLimit) / (24 * 60 * 60 * 1000)) * 100;
 
+        const behavior = getAbsenceBehavior(absence);
+
         const block = document.createElement("div");
-        block.className = "time-block absence";
+        block.className = `time-block ${behavior.colorClass}`;
         block.style.left = `${leftPercent}%`;
         block.style.width = `${widthPercent}%`;
+        let label = behavior.label;
+        if ((absence.type === 'Service' || absence.type === 'Personal') && absence.explanation) {
+          label += `: ${absence.explanation}`;
+        }
         block.innerHTML = `
-          <span class="block-title">${absence.typeBG}</span>
+          <span class="block-title">${label}</span>
           <span class="block-time">${absStart.getDate()}.${absStart.getMonth()+1} - ${absEnd.getDate()}.${absEnd.getMonth()+1}</span>
         `;
         
@@ -546,6 +678,24 @@ function getDriverStateAtCurrentTime(driverId) {
 }
 
 // Популиране на филтрираните водачи в селекторите за смени
+function populateDepotDropdowns() {
+  const depotSelect = document.getElementById("shift-depot-select");
+  if (!depotSelect) return;
+
+  const currentSelection = depotSelect.value;
+  depotSelect.innerHTML = `<option value="">-- Всички депа --</option>`;
+
+  const depots = [...new Set(state.drivers.map(d => d.depot))].sort();
+  depots.forEach(depot => {
+    const option = document.createElement("option");
+    option.value = depot;
+    option.textContent = `Депо ${depot}`;
+    depotSelect.appendChild(option);
+  });
+
+  if (currentSelection) depotSelect.value = currentSelection;
+}
+
 function populateDriverDropdowns() {
   const driverSelect = document.getElementById("shift-driver-select");
   if (!driverSelect) return;
@@ -560,33 +710,113 @@ function populateDriverDropdowns() {
     targetTime = new Date(plannedTimeInput.value);
   }
 
-  // Скриваме напълно тези, които в това време са в отпуск/болничен
+  // Взимаме избраното депо
+  const depotSelect = document.getElementById("shift-depot-select");
+  const selectedDepot = depotSelect ? depotSelect.value : "";
+
+  // Взимаме избрания влак (за проверка на правоспособност)
+  const trainSelect = document.getElementById("shift-train-select");
+  const selectedTrainId = trainSelect ? trainSelect.value : "";
+  const selectedTrain = state.trains.find(t => t.id === selectedTrainId);
+
+  // Определяне на целевата дата за проверка на дублиране
+  let targetDateStr = "";
+  if (plannedTimeInput && plannedTimeInput.value) {
+    targetDateStr = plannedTimeInput.value.split("T")[0];
+  } else {
+    targetDateStr = state.currentDateStr;
+  }
+  const alreadyAssigned = getAssignedDriverIdsOnDate(targetDateStr);
+
+  const eligible = [];
+
+  // Филтриране на водачите
   state.drivers.forEach(driver => {
-    let isAbsent = false;
+    // Филтър по депо
+    if (selectedDepot && driver.depot !== selectedDepot) return;
+
+    // Скриваме ако вече е назначен на същата дата
+    if (alreadyAssigned.has(driver.id)) return;
+
+    let absenceBlockLevel = null;
+    let absenceLabel = null;
     for (const abs of driver.absences) {
       const absStart = new Date(abs.start);
       const absEnd = new Date(abs.end);
       if (targetTime >= absStart && targetTime <= absEnd) {
-        isAbsent = true;
+        const behavior = getAbsenceBehavior(abs);
+        absenceBlockLevel = behavior.blockLevel;
+        absenceLabel = behavior.label;
         break;
       }
     }
 
-    if (!isAbsent) {
-      const option = document.createElement("option");
-      option.value = driver.id;
-      // Добавяне на допълнителна информация в името
-      const driverState = getDriverStateAtCurrentTime(driver.id);
-      let suffix = " (Свободен)";
-      if (driverState.status === 'resting') {
-        suffix = ` (Почива до ${formatTime(driverState.restUntil)})`;
-      } else if (driverState.status === 'active') {
-        suffix = ` (На влак ${driverState.shift.trainId})`;
-      }
-      option.textContent = `${driver.name} - Депо ${driver.depot}${suffix}`;
-      driverSelect.appendChild(option);
+    // Скриваме ако отсъствието блокира
+    if (absenceBlockLevel === 'block') return;
+
+    // Проверка за правоспособност и почивка спрямо избрания влак
+    if (selectedTrainId && selectedTrain) {
+      const rules = checkBusinessRules(driver.id, selectedTrainId, targetTime.toISOString());
+      // Скриваме ако не отговаря на твърдите правила
+      if (rules.rest.status === 'red' || rules.competence.status === 'red') return;
     }
+
+    // Изчисляване на почивка от последната смяна (в часове)
+    const driverShifts = state.shifts
+      .filter(s => s.driverId === driver.id && s.status === 'completed' && s.releaseActual)
+      .sort((a, b) => new Date(b.releaseActual) - new Date(a.releaseActual));
+    let restHours = 999;
+    if (driverShifts.length > 0) {
+      restHours = (targetTime - new Date(driverShifts[0].releaseActual)) / (1000 * 60 * 60);
+    }
+
+    // Изчисляване откога не е карал този влак (в дни)
+    const pastShifts = state.shifts
+      .filter(s => s.driverId === driver.id && s.trainId === selectedTrainId)
+      .sort((a, b) => new Date(b.appearancePlanned) - new Date(a.appearancePlanned));
+    let daysSinceLastTrain = 9999;
+    if (pastShifts.length > 0) {
+      daysSinceLastTrain = (targetTime - new Date(pastShifts[0].appearancePlanned)) / (1000 * 60 * 60 * 24);
+    }
+
+    const driverState = getDriverStateAtCurrentTime(driver.id);
+    let suffix = " (Свободен)";
+    if (absenceBlockLevel === 'warn') {
+      suffix = ` ⚠️ (${absenceLabel})`;
+    } else if (driverState.status === 'resting') {
+      suffix = ` (Почива до ${formatTime(driverState.restUntil)})`;
+    } else if (driverState.status === 'active') {
+      suffix = ` (На влак ${driverState.shift.trainId})`;
+    }
+
+    eligible.push({ driver, absenceBlockLevel, suffix, restHours, daysSinceLastTrain });
   });
+
+  const noAbsence = eligible.filter(e => e.absenceBlockLevel !== 'warn');
+  const withWarn = eligible.filter(e => e.absenceBlockLevel === 'warn');
+
+  const sortFn = (a, b) => {
+    if (b.restHours !== a.restHours) return b.restHours - a.restHours;
+    return b.daysSinceLastTrain - a.daysSinceLastTrain;
+  };
+  noAbsence.sort(sortFn);
+  withWarn.sort(sortFn);
+
+  const renderGroup = (items, label) => {
+    if (items.length === 0) return;
+    const group = document.createElement("optgroup");
+    group.label = label;
+    items.forEach(e => {
+      const opt = document.createElement("option");
+      opt.value = e.driver.id;
+      opt.textContent = `${e.driver.name}${e.suffix}`;
+      group.appendChild(opt);
+    });
+    driverSelect.appendChild(group);
+  };
+
+  renderGroup(noAbsence, "✅ Налични (без заявена почивка)");
+  renderGroup(withWarn, "⚠️ Свободни с предупреждение");
 
   if (currentSelection) {
     driverSelect.value = currentSelection;
@@ -613,125 +843,277 @@ function populateTrainDropdowns() {
   }
 }
 
-// Рендиране на профилите в таб "Служители"
+// Рендиране на панела с норми по длъжности
+function renderPositionNorms() {
+  const container = document.getElementById("position-norms-container");
+  if (!container) return;
+
+  container.innerHTML = "";
+  const positions = Object.keys(state.positionNorms);
+  if (positions.length === 0) {
+    container.innerHTML = '<span style="color:var(--text-muted);font-size:0.85rem;">Няма зададени норми.</span>';
+    return;
+  }
+
+  positions.forEach(pos => {
+    const item = document.createElement("div");
+    item.className = "norm-item";
+    item.innerHTML = `
+      <label>${pos}</label>
+      <div class="norm-input-row">
+        <input type="number" class="norm-input" data-position="${pos}" value="${state.positionNorms[pos]}" min="80" max="240" step="1">
+        <span style="font-size:0.75rem;color:var(--text-muted);white-space:nowrap;">ч/мес</span>
+      </div>
+    `;
+    container.appendChild(item);
+  });
+}
+
+function savePositionNorms() {
+  const inputs = document.querySelectorAll("#position-norms-container .norm-input");
+  inputs.forEach(input => {
+    const pos = input.dataset.position;
+    const val = parseInt(input.value);
+    if (pos && val > 0) {
+      state.positionNorms[pos] = val;
+      // Актуализиране на нормите на всички служители с тази длъжност
+      state.drivers.forEach(d => {
+        if (d.position === pos) {
+          d.monthlyNorm = val;
+          d.quarterlyNorm = val * 3;
+          d.yearlyNorm = val * 12;
+        }
+      });
+    }
+  });
+  saveToLocalStorage();
+  renderCrewProfiles();
+  showToast("Нормите са запазени и приложени към служителите!", "success");
+}
+
+// Помощна функция за рендиране на карта на служител
+function renderDriverCard(driver) {
+  const card = document.createElement("div");
+  card.className = "glass crew-card";
+
+  const monthPct = Math.min((driver.monthlyWorked / driver.monthlyNorm) * 100, 100);
+  let monthBarClass = "normal";
+  if (driver.monthlyWorked >= driver.monthlyNorm) monthBarClass = "overtime";
+  else if (driver.monthlyWorked >= driver.monthlyNorm - 15) monthBarClass = "warning";
+
+  const qPct = Math.min((driver.quarterlyWorked / driver.quarterlyNorm) * 100, 100);
+  let qBarClass = "normal";
+  if (driver.quarterlyWorked >= driver.quarterlyNorm - 30) qBarClass = "warning";
+
+  // Годишен извънреден труд = общо отработено - норма за изминалите месеци
+  const monthsElapsed = parseInt(state.currentDateStr.split('-')[1]) || 5;
+  const expectedYtd = monthsElapsed * driver.monthlyNorm;
+  const yearlyOvertime = Math.max(0, driver.yearlyWorked - expectedYtd);
+  let yBarClass = "normal";
+  if (yearlyOvertime > 100 && yearlyOvertime <= 150) yBarClass = "warning";
+  if (yearlyOvertime > 150) yBarClass = "overtime";
+
+  let activeAbsenceHTML = "";
+  if (driver.absences.length > 0) {
+    activeAbsenceHTML = `<div style="border-bottom: 1px solid rgba(255,255,255,0.03); padding-bottom: 6px;">
+      <span class="crew-info-label" style="margin-bottom: 4px; display: block;">Отсъствия:</span>
+      ${driver.absences.map(abs => {
+        const behavior = getAbsenceBehavior(abs);
+        const colorMap = {
+          'absence-vacation-requested': '#9ca3af',
+          'absence-vacation-approved': '#3b82f6',
+          'absence-sick-requested': '#f59e0b',
+          'absence-sick-presented': '#f43f5e',
+          'absence-service': '#f97316',
+          'absence-personal': '#f97316'
+        };
+        const color = colorMap[behavior.colorClass] || '#f43f5e';
+        let extra = "";
+        if ((abs.type === 'Service' || abs.type === 'Personal') && abs.explanation) {
+          extra = ` <span style="font-size:0.7rem;color:var(--text-muted)">(${abs.explanation})</span>`;
+        }
+        return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:0.8rem;margin-bottom:4px;color:${color}">
+          <span>${behavior.label}${extra} (${formatDate(abs.start)} - ${formatDate(abs.end)})</span>
+          <span style="display:flex;gap:4px;flex-shrink:0;">
+            <button class="btn-icon" onclick="showAbsenceModal('${driver.id}','${abs.id}')" style="font-size:0.7rem;padding:2px 6px;">✏️</button>
+            <button class="btn-icon btn-icon-danger" onclick="deleteAbsence('${driver.id}','${abs.id}')" style="font-size:0.7rem;padding:2px 6px;">❌</button>
+          </span>
+        </div>`;
+      }).join("")}
+    </div>`;
+  }
+
+  const fullName = `${driver.firstName || ""} ${driver.middleName || ""} ${driver.lastName || ""}`.trim() || driver.name || "Няма име";
+
+  let phonesHTML = "";
+  if (driver.phones && driver.phones.length > 0) {
+    phonesHTML = driver.phones.map(p => {
+      return `
+      <div style="display:flex; justify-content:space-between; width: 100%; font-size: 0.75rem; color: #fff; margin-bottom: 2px;">
+        <span style="color: var(--text-muted);">${p.description || "Личен"}:</span>
+        <span style="font-weight: 500;">${p.number}</span>
+      </div>`;
+    }).join("");
+  } else if (driver.phone) {
+    phonesHTML = `
+    <div style="display:flex; justify-content:space-between; width: 100%; font-size: 0.75rem; color: #fff; margin-bottom: 2px;">
+      <span style="color: var(--text-muted);">Личен:</span>
+      <span style="font-weight: 500;">${driver.phone}</span>
+    </div>`;
+  } else {
+    phonesHTML = `
+    <div style="display:flex; justify-content:space-between; width: 100%; font-size: 0.75rem; color: #fff; margin-bottom: 2px;">
+      <span style="color: var(--text-muted);">Телефон:</span>
+      <span style="font-weight: 500;">-</span>
+    </div>`;
+  }
+
+  card.innerHTML = `
+  <div class="crew-card-header">
+    <div class="crew-card-name">${fullName}</div>
+    <div class="crew-card-depot">Депо ${driver.depot}</div>
+  </div>
+
+  <div class="crew-info-row">
+    <span class="crew-info-label">Табелен номер:</span>
+    <span class="crew-info-value">#${driver.id}</span>
+  </div>
+
+  <div class="crew-info-row">
+    <span class="crew-info-label">Длъжност:</span>
+    <span class="crew-info-value">${driver.position || "Машинист"}</span>
+  </div>
+
+  <div class="crew-info-row">
+    <span class="crew-info-label">Местоживеене:</span>
+    <span class="crew-info-value">${driver.residence || driver.depot}</span>
+  </div>
+
+  <div class="crew-info-row" style="flex-direction: column; align-items: flex-start; gap: 4px; border-bottom: 1px solid rgba(255,255,255,0.03); padding-bottom: 6px;">
+    <span class="crew-info-label" style="margin-bottom: 2px;">Телефони за връзка:</span>
+    ${phonesHTML}
+  </div>
+
+  <div class="crew-info-row">
+    <span class="crew-info-label">Компетенции:</span>
+    <span class="crew-info-value" style="text-align: right; max-width: 60%;">${driver.competencies.join(", ")}</span>
+  </div>
+
+  ${activeAbsenceHTML}
+
+  <div class="progress-container">
+    <div class="progress-header">
+      <span>📅 Месечен Баланс</span>
+      <span><strong>${driver.monthlyWorked}</strong> / ${driver.monthlyNorm} ч</span>
+    </div>
+    <div class="progress-bar-bg">
+      <div class="progress-bar-fill ${monthBarClass}" style="width: ${monthPct}%"></div>
+    </div>
+  </div>
+
+  <div class="progress-container">
+    <div class="progress-header">
+      <span>📅 Тримесечен Баланс</span>
+      <span><strong>${driver.quarterlyWorked}</strong> / ${driver.quarterlyNorm} ч</span>
+    </div>
+    <div class="progress-bar-bg">
+      <div class="progress-bar-fill ${qBarClass}" style="width: ${qPct}%"></div>
+    </div>
+  </div>
+
+  <div class="progress-container">
+    <div class="progress-header">
+      <span>📅 Извънреден труд (годишен)</span>
+      <span style="font-weight:700;color:${yBarClass === 'normal' ? 'var(--color-success)' : yBarClass === 'warning' ? 'var(--color-warning)' : 'var(--color-danger)'}">${yearlyOvertime.toFixed(1)} ч над нормата</span>
+    </div>
+    <div class="progress-bar-bg">
+      <div class="progress-bar-fill ${yBarClass}" style="width: ${Math.min((yearlyOvertime / 200) * 100, 100)}%"></div>
+    </div>
+  </div>
+
+  <div class="crew-card-actions">
+    <button class="btn-icon" onclick="showCrewModal('${driver.id}')">✏️ Редактиране</button>
+    <button class="btn-icon" onclick="showAbsenceModal('${driver.id}')">📅 Отсъствие</button>
+    <button class="btn-icon btn-icon-danger" onclick="deleteCrew('${driver.id}')">❌ Изтриване</button>
+  </div>
+  `;
+
+  return card;
+}
+
+// Рендиране на профилите в таб "Служители", групирани по депа
 function renderCrewProfiles() {
   const crewContainer = document.getElementById("crew-profiles-list");
   if (!crewContainer) return;
 
+  renderPositionNorms();
+
   crewContainer.innerHTML = "";
 
-  state.drivers.forEach(driver => {
-    const card = document.createElement("div");
-    card.className = "glass crew-card";
+  // Групиране на служителите по депа
+  const depots = {};
+  const depotOrder = ["Русе", "Плевен", "Горна Оряховица", "Каспичан"];
+  state.drivers.forEach(d => {
+    if (!depots[d.depot]) depots[d.depot] = [];
+    depots[d.depot].push(d);
+  });
 
-    // Прогрес за месечните часове
-    const monthPct = Math.min((driver.monthlyWorked / driver.monthlyNorm) * 100, 100);
-    let monthBarClass = "normal";
-    if (driver.monthlyWorked >= driver.monthlyNorm) monthBarClass = "overtime";
-    else if (driver.monthlyWorked >= driver.monthlyNorm - 15) monthBarClass = "warning";
+  depotOrder.forEach(depot => {
+    const drivers = depots[depot];
+    if (!drivers || drivers.length === 0) return;
 
-    // Прогрес за тримесечните часове
-    const qPct = Math.min((driver.quarterlyWorked / driver.quarterlyNorm) * 100, 100);
-    let qBarClass = "normal";
-    if (driver.quarterlyWorked >= driver.quarterlyNorm - 30) qBarClass = "warning";
+    // Секция за депото
+    const section = document.createElement("div");
+    section.className = "crew-depot-section";
 
-    // Активно отсъствие
-    let activeAbsenceHTML = "";
-    if (driver.absences.length > 0) {
-      activeAbsenceHTML = driver.absences.map(abs => {
-        return `<div class="crew-info-row" style="color: var(--color-danger)">
-          <span class="crew-info-label">Отсъствие:</span>
-          <span class="crew-info-value">${abs.typeBG} (${formatDate(abs.start)} - ${formatDate(abs.end)})</span>
-        </div>`;
-      }).join("");
-    }
-
-    const fullName = `${driver.firstName || ""} ${driver.middleName || ""} ${driver.lastName || ""}`.trim() || driver.name || "Няма име";
-
-      // Динамично рендиране на всички телефони за връзка с техните описания
-      let phonesHTML = "";
-      if (driver.phones && driver.phones.length > 0) {
-        phonesHTML = driver.phones.map(p => {
-          return `
-          <div style="display:flex; justify-content:space-between; width: 100%; font-size: 0.75rem; color: #fff; margin-bottom: 2px;">
-            <span style="color: var(--text-muted);">${p.description || "Личен"}:</span>
-            <span style="font-weight: 500;">${p.number}</span>
-          </div>`;
-        }).join("");
-      } else if (driver.phone) {
-        phonesHTML = `
-        <div style="display:flex; justify-content:space-between; width: 100%; font-size: 0.75rem; color: #fff; margin-bottom: 2px;">
-          <span style="color: var(--text-muted);">Личен:</span>
-          <span style="font-weight: 500;">${driver.phone}</span>
-        </div>`;
-      } else {
-        phonesHTML = `
-        <div style="display:flex; justify-content:space-between; width: 100%; font-size: 0.75rem; color: #fff; margin-bottom: 2px;">
-          <span style="color: var(--text-muted);">Телефон:</span>
-          <span style="font-weight: 500;">-</span>
-        </div>`;
-      }
-
-      card.innerHTML = `
-      <div class="crew-card-header">
-        <div class="crew-card-name">${fullName}</div>
-        <div class="crew-card-depot">Депо ${driver.depot}</div>
-      </div>
-      
-      <div class="crew-info-row">
-        <span class="crew-info-label">Табелен номер:</span>
-        <span class="crew-info-value">#${driver.id}</span>
-      </div>
-
-      <div class="crew-info-row">
-        <span class="crew-info-label">Длъжност:</span>
-        <span class="crew-info-value">${driver.position || "Машинист"}</span>
-      </div>
-
-      <div class="crew-info-row">
-        <span class="crew-info-label">Местоживеене:</span>
-        <span class="crew-info-value">${driver.residence || driver.depot}</span>
-      </div>
-      
-      <div class="crew-info-row" style="flex-direction: column; align-items: flex-start; gap: 4px; border-bottom: 1px solid rgba(255,255,255,0.03); padding-bottom: 6px;">
-        <span class="crew-info-label" style="margin-bottom: 2px;">Телефони за връзка:</span>
-        ${phonesHTML}
-      </div>
-
-      <div class="crew-info-row">
-        <span class="crew-info-label">Компетенции:</span>
-        <span class="crew-info-value" style="text-align: right; max-width: 60%;">${driver.competencies.join(", ")}</span>
-      </div>
-
-      ${activeAbsenceHTML}
-
-      <div class="progress-container">
-        <div class="progress-header">
-          <span>Месечен Баланс</span>
-          <span><strong>${driver.monthlyWorked}</strong> / ${driver.monthlyNorm} ч</span>
-        </div>
-        <div class="progress-bar-bg">
-          <div class="progress-bar-fill ${monthBarClass}" style="width: ${monthPct}%"></div>
-        </div>
-      </div>
-
-      <div class="progress-container">
-        <div class="progress-header">
-          <span>Тримесечен Баланс</span>
-          <span><strong>${driver.quarterlyWorked}</strong> / ${driver.quarterlyNorm} ч</span>
-        </div>
-        <div class="progress-bar-bg">
-          <div class="progress-bar-fill ${qBarClass}" style="width: ${qPct}%"></div>
-        </div>
-      </div>
-
-      <div class="crew-card-actions">
-        <button class="btn-icon" onclick="showCrewModal('${driver.id}')">✏️ Редактиране</button>
-        <button class="btn-icon btn-icon-danger" onclick="deleteCrew('${driver.id}')">❌ Изтриване</button>
-      </div>
+    const header = document.createElement("div");
+    header.className = "crew-depot-header";
+    const posCounts = {};
+    drivers.forEach(d => { posCounts[d.position] = (posCounts[d.position] || 0) + 1; });
+    const posSummary = Object.entries(posCounts)
+      .map(([pos, count]) => `${pos}: ${count}`)
+      .join(" | ");
+    header.innerHTML = `
+      <span style="font-size:1.3rem;">🚉</span>
+      <h4>Депо ${depot}</h4>
+      <span class="crew-depot-count">${posSummary}</span>
     `;
+    section.appendChild(header);
 
-    crewContainer.appendChild(card);
+    const grid = document.createElement("div");
+    grid.className = "crew-grid";
+
+    // Сортиране на служителите по име в рамките на депото
+    drivers.sort((a, b) => a.name.localeCompare(b.name, 'bg')).forEach(d => {
+      grid.appendChild(renderDriverCard(d));
+    });
+
+    section.appendChild(grid);
+    crewContainer.appendChild(section);
+  });
+
+  // Ако има депа извън стандартния списък
+  Object.keys(depots).forEach(depot => {
+    if (depotOrder.includes(depot)) return;
+    const drivers = depots[depot];
+    const section = document.createElement("div");
+    section.className = "crew-depot-section";
+    const header = document.createElement("div");
+    header.className = "crew-depot-header";
+    const posCounts = {};
+    drivers.forEach(d => { posCounts[d.position] = (posCounts[d.position] || 0) + 1; });
+    const posSummary = Object.entries(posCounts)
+      .map(([pos, count]) => `${pos}: ${count}`)
+      .join(" | ");
+    header.innerHTML = `<span style="font-size:1.3rem;">🚉</span><h4>Депо ${depot}</h4><span class="crew-depot-count">${posSummary}</span>`;
+    section.appendChild(header);
+    const grid = document.createElement("div");
+    grid.className = "crew-grid";
+    drivers.sort((a, b) => a.name.localeCompare(b.name, 'bg')).forEach(d => {
+      grid.appendChild(renderDriverCard(d));
+    });
+    section.appendChild(grid);
+    crewContainer.appendChild(section);
   });
 }
 
@@ -940,20 +1322,12 @@ function updateTrafficLight() {
   const btnApprove = document.getElementById("btn-finalize-scheduling");
 
   if (!driverId || !trainId || !plannedTimeStr) {
-    // Изключване на светофара
-    resetTrafficLight();
     if (btnApprove) btnApprove.disabled = true;
     return;
   }
 
   const plannedTime = new Date(plannedTimeStr).toISOString();
   const checks = checkBusinessRules(driverId, trainId, plannedTime);
-
-  // Рендиране на състоянието
-  renderLightRow("light-rest", checks.rest);
-  renderLightRow("light-competence", checks.competence);
-  renderLightRow("light-rotation", checks.rotation);
-  renderLightRow("light-balance", checks.balance);
 
   // Валидиране дали можем да финализираме (блокиране при RED статус на твърдите правила)
   const hasHardError = checks.rest.status === "red" || checks.competence.status === "red";
@@ -962,30 +1336,8 @@ function updateTrafficLight() {
   }
 }
 
-function renderLightRow(rowId, check) {
-  const row = document.getElementById(rowId);
-  const circle = row.querySelector(".light-circle");
-  const desc = row.querySelector(".light-desc");
-
-  // Изчистване на стари класове
-  circle.className = "light-circle";
-  row.className = "light-row";
-
-  circle.classList.add(check.status);
-  row.classList.add(check.status);
-  desc.textContent = check.text;
-}
-
 function resetTrafficLight() {
-  const rows = ["light-rest", "light-competence", "light-rotation", "light-balance"];
-  rows.forEach(rowId => {
-    const row = document.getElementById(rowId);
-    if (row) {
-      row.className = "light-row";
-      row.querySelector(".light-circle").className = "light-circle off";
-      row.querySelector(".light-desc").textContent = "Изчаква се избор...";
-    }
-  });
+  // Traffic light UI е премахнат — функцията остава за съвместимост
 }
 
 // ==========================================
@@ -1216,6 +1568,13 @@ function saveCrewTrigger() {
       driver.phones = phones;
       driver.phone = phones[0].number; // съвместимост назад
       driver.competencies = competencies;
+      // Синхронизиране на норми според длъжността
+      const normForPosition = state.positionNorms[position];
+      if (normForPosition) {
+        driver.monthlyNorm = normForPosition;
+        driver.quarterlyNorm = normForPosition * 3;
+        driver.yearlyNorm = normForPosition * 12;
+      }
 
       // Обновяване на всички смени, които препращат към стария табелен номер, за да се запази интегритетът на базата
       if (oldId !== id) {
@@ -1246,10 +1605,12 @@ function saveCrewTrigger() {
       position,
       residence,
       competencies,
-      monthlyNorm: 160,
-      quarterlyNorm: 480,
+      monthlyNorm: state.positionNorms[position] || 160,
+      quarterlyNorm: (state.positionNorms[position] || 160) * 3,
+      yearlyNorm: (state.positionNorms[position] || 160) * 12,
       monthlyWorked: 0,
       quarterlyWorked: 0,
+      yearlyWorked: 0,
       absences: []
     };
     state.drivers.push(newDriver);
@@ -1281,13 +1642,289 @@ function deleteCrew(driverId) {
 }
 
 // ==========================================
+// УПРАВЛЕНИЕ НА ОТСЪСТВИЯ (CRUD)
+// ==========================================
+
+let editingAbsenceDriverId = null;
+let editingAbsenceId = null;
+
+function showAbsenceModal(driverId, absenceId = null) {
+  const modal = document.getElementById("absence-modal");
+  const title = document.getElementById("absence-modal-title");
+  const driver = state.drivers.find(d => d.id === driverId);
+  if (!driver) return;
+
+  editingAbsenceDriverId = driverId;
+  editingAbsenceId = absenceId;
+  onAbsenceTypeChange();
+
+  if (absenceId) {
+    title.textContent = "Редактиране на Отсъствие";
+    const absence = driver.absences.find(a => a.id === absenceId);
+    if (absence) {
+      document.getElementById("modal-absence-type").value = absence.type;
+      onAbsenceTypeChange();
+      document.getElementById("modal-absence-requested").checked = !!absence.requested;
+      document.getElementById("modal-absence-approved").checked = !!absence.approved;
+      document.getElementById("modal-absence-presented").checked = !!absence.presented;
+      document.getElementById("modal-absence-explanation").value = absence.explanation || "";
+      document.getElementById("modal-absence-start").value = absence.start.slice(0, 16);
+      document.getElementById("modal-absence-end").value = absence.end.slice(0, 16);
+    }
+  } else {
+    title.textContent = "Добавяне на Отсъствие";
+    document.getElementById("modal-absence-type").value = "Vacation";
+    onAbsenceTypeChange();
+    document.getElementById("modal-absence-requested").checked = true;
+    document.getElementById("modal-absence-approved").checked = false;
+    document.getElementById("modal-absence-presented").checked = false;
+    document.getElementById("modal-absence-explanation").value = "";
+    const now = getSimulatedDateTime();
+    const pad = (n) => String(n).padStart(2, '0');
+    const startStr = `${state.currentDateStr}T${pad(state.currentHour)}:${pad(state.currentMinute)}`;
+    document.getElementById("modal-absence-start").value = startStr;
+    document.getElementById("modal-absence-end").value = startStr;
+  }
+
+  modal.classList.add("active");
+}
+
+function saveAbsenceTrigger() {
+  const driver = state.drivers.find(d => d.id === editingAbsenceDriverId);
+  if (!driver) {
+    showToast("Грешка: Не е избран служител!", "error");
+    return;
+  }
+
+  const type = document.getElementById("modal-absence-type").value;
+  const requested = document.getElementById("modal-absence-requested").checked;
+  const approved = document.getElementById("modal-absence-approved").checked;
+  const presented = document.getElementById("modal-absence-presented").checked;
+  const explanation = document.getElementById("modal-absence-explanation").value.trim();
+  const start = document.getElementById("modal-absence-start").value;
+  const end = document.getElementById("modal-absence-end").value;
+
+  if (!start || !end) {
+    showToast("Началото и краят са задължителни!", "error");
+    return;
+  }
+  if (new Date(end) <= new Date(start)) {
+    showToast("Краят трябва да е след началото!", "error");
+    return;
+  }
+  if ((type === 'Service' || type === 'Personal') && !explanation) {
+    showToast("Моля, въведете пояснение за ангажираността!", "error");
+    return;
+  }
+
+  const typeBG = {
+    Vacation: "Платен отпуск",
+    Sick: "Медицински отпуск",
+    Service: "Служебна ангажираност",
+    Personal: "Лична ангажираност"
+  }[type] || type;
+
+  if (editingAbsenceId) {
+    const absence = driver.absences.find(a => a.id === editingAbsenceId);
+    if (absence) {
+      absence.type = type;
+      absence.typeBG = typeBG;
+      absence.requested = requested;
+      absence.approved = approved;
+      absence.presented = presented;
+      absence.explanation = explanation;
+      absence.start = new Date(start).toISOString();
+      absence.end = new Date(end).toISOString();
+      showToast("Отсъствието бе редактирано!", "success");
+    }
+  } else {
+    const newAbsence = {
+      id: "abs_" + Date.now(),
+      type,
+      typeBG,
+      requested,
+      approved,
+      presented,
+      explanation,
+      start: new Date(start).toISOString(),
+      end: new Date(end).toISOString()
+    };
+    driver.absences.push(newAbsence);
+    showToast("Отсъствието бе добавено!", "success");
+  }
+
+  saveToLocalStorage();
+  document.getElementById("absence-modal").classList.remove("active");
+  updateUI();
+}
+
+function deleteAbsence(driverId, absenceId) {
+  const driver = state.drivers.find(d => d.id === driverId);
+  if (!driver) return;
+
+  if (confirm("Сигурни ли сте, че искате да изтриете това отсъствие?")) {
+    driver.absences = driver.absences.filter(a => a.id !== absenceId);
+    saveToLocalStorage();
+    showToast("Отсъствието бе премахнато.", "warning");
+    updateUI();
+  }
+}
+
+// ==========================================
 // ОСНОВНИ ФУНКЦИИ ЗА ОБНОВЯВАНЕ И ИНТЕРФЕЙС
 // ==========================================
 
+// ==========================================
+// ЗАЯВЕНИ ВЛАКОВЕ (Assignations Table)
+// ==========================================
+function addAssignationRow() {
+  state.assignations.push({
+    id: "asgn_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+    time: "05:00",
+    location: "",
+    trainId: "",
+    driverId: "",
+    assistantId: ""
+  });
+  saveToLocalStorage();
+  renderAssignationsTable();
+}
+
+function removeAssignationRow(id) {
+  state.assignations = state.assignations.filter(a => a.id !== id);
+  saveToLocalStorage();
+  renderAssignationsTable();
+  if (state.assigningCell && state.assigningCell.rowId === id) {
+    state.assigningCell = null;
+    document.getElementById("btn-finalize-scheduling").textContent = "✅ Финализиране и Одобрение на Назначението";
+  }
+}
+
+function renderAssignationsTable() {
+  const tbody = document.getElementById("assignations-body");
+  if (!tbody) return;
+
+  const nextDayEl = document.getElementById("assignations-date");
+  if (nextDayEl) {
+    const nextDate = new Date(state.currentDateStr);
+    nextDate.setDate(nextDate.getDate() + 1);
+    const bgMonths = ["Януари","Февруари","Март","Април","Май","Юни","Юли","Август","Септември","Октомври","Ноември","Декември"];
+    nextDayEl.textContent = `${nextDate.getDate()} ${bgMonths[nextDate.getMonth()]} ${nextDate.getFullYear()}г.`;
+  }
+
+  tbody.innerHTML = "";
+  if (state.assignations.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:24px;font-size:0.85rem;">Все още няма заявени влакове. Натиснете "+ Добави ред"</td></tr>';
+    return;
+  }
+
+  state.assignations.forEach(a => {
+    const tr = document.createElement("tr");
+    const driverLabel = a.driverId
+      ? `${a.driverId}`
+      : "Избери...";
+    const assistantLabel = a.assistantId
+      ? `${a.assistantId}`
+      : "Избери...";
+
+    tr.innerHTML = `
+      <td><input type="time" value="${a.time}" data-id="${a.id}" class="asgn-time-input"></td>
+      <td><input type="text" value="${a.location}" data-id="${a.id}" class="asgn-location-input" placeholder="..." maxlength="3"></td>
+      <td>
+        <select data-id="${a.id}" class="asgn-train-select">
+          <option value="">-- Изберете --</option>
+          ${state.trains.map(t =>
+            `<option value="${t.id}"${t.id === a.trainId ? " selected" : ""}>${t.id}</option>`
+          ).join("")}
+        </select>
+      </td>
+      <td><span class="driver-cell${a.driverId ? " filled" : ""}" data-id="${a.id}" data-field="driverId">${driverLabel}</span></td>
+      <td><span class="driver-cell${a.assistantId ? " filled" : ""}" data-id="${a.id}" data-field="assistantId">${assistantLabel}</span></td>
+      <td><button class="btn-remove-row" data-id="${a.id}">&times;</button></td>
+    `;
+
+    tbody.appendChild(tr);
+  });
+
+  // Event listeners
+  tbody.querySelectorAll(".asgn-time-input").forEach(inp => {
+    inp.addEventListener("change", e => {
+      const a = state.assignations.find(x => x.id === e.target.dataset.id);
+      if (a) { a.time = e.target.value; saveToLocalStorage(); }
+    });
+  });
+
+  tbody.querySelectorAll(".asgn-location-input").forEach(inp => {
+    inp.addEventListener("change", e => {
+      const a = state.assignations.find(x => x.id === e.target.dataset.id);
+      if (a) { a.location = e.target.value; saveToLocalStorage(); }
+    });
+  });
+
+  tbody.querySelectorAll(".asgn-train-select").forEach(sel => {
+    sel.addEventListener("change", e => {
+      const a = state.assignations.find(x => x.id === e.target.dataset.id);
+      if (a) { a.trainId = e.target.value; saveToLocalStorage(); }
+    });
+  });
+
+  tbody.querySelectorAll(".driver-cell").forEach(cell => {
+    cell.addEventListener("click", e => {
+      const id = e.currentTarget.dataset.id;
+      const field = e.currentTarget.dataset.field;
+      startAssigningDriver(id, field);
+    });
+  });
+
+  tbody.querySelectorAll(".btn-remove-row").forEach(btn => {
+    btn.addEventListener("click", e => {
+      removeAssignationRow(e.currentTarget.dataset.id);
+    });
+  });
+}
+
+function startAssigningDriver(rowId, field) {
+  const assignation = state.assignations.find(a => a.id === rowId);
+  if (!assignation) return;
+
+  state.assigningCell = { rowId, field };
+
+  // Pre-fill the planning form
+  const trainSelect = document.getElementById("shift-train-select");
+  const timeInput = document.getElementById("shift-planned-time");
+  if (trainSelect && assignation.trainId) {
+    trainSelect.value = assignation.trainId;
+    trainSelect.dispatchEvent(new Event("change"));
+  }
+  if (timeInput) {
+    const nextDate = new Date(state.currentDateStr);
+    nextDate.setDate(nextDate.getDate() + 1);
+    const pad = n => String(n).padStart(2, "0");
+    const timeParts = assignation.time.split(":");
+    timeInput.value = `${nextDate.getFullYear()}-${pad(nextDate.getMonth()+1)}-${pad(nextDate.getDate())}T${pad(timeParts[0])}:${pad(timeParts[1])}`;
+    timeInput.dispatchEvent(new Event("change"));
+  }
+
+  populateDriverDropdowns();
+
+  // Change button text
+  const btn = document.getElementById("btn-finalize-scheduling");
+  if (btn) {
+    btn.textContent = field === "driverId" ? "🎯 Задай машинист" : "🎯 Задай пом. машинист";
+    btn.disabled = false;
+    btn.dataset.assignMode = "true";
+  }
+
+  // Scroll to form
+  document.getElementById("btn-finalize-scheduling")?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
 function updateUI() {
   renderGanttTimeline();
+  populateDepotDropdowns();
   populateDriverDropdowns();
   populateTrainDropdowns();
+  renderAssignationsTable();
   renderCrewProfiles();
   renderTrainsManagement();
   renderTrainTemplates();
@@ -1302,6 +1939,18 @@ function updateUI() {
   const dateEl = document.getElementById("sim-clock-date");
   if (clockEl) clockEl.textContent = clockText;
   if (dateEl) dateEl.textContent = dateText;
+
+  // Актуализиране на датата за "Назначен персонал" (следващия ден)
+  const nextDayEl = document.getElementById("next-day-date");
+  if (nextDayEl) {
+    const nextDate = new Date(state.currentDateStr);
+    nextDate.setDate(nextDate.getDate() + 1);
+    const bgMonths = ["Януари", "Февруари", "Март", "Април", "Май", "Юни", "Юли", "Август", "Септември", "Октомври", "Ноември", "Декември"];
+    const day = nextDate.getDate();
+    const month = bgMonths[nextDate.getMonth()];
+    const year = nextDate.getFullYear();
+    nextDayEl.textContent = `${day} ${month} ${year}г.`;
+  }
 
   // Изчисляване на статистиката спрямо диспечерското време
   let totalDrivers = state.drivers.length;
@@ -1366,6 +2015,16 @@ function switchTab(tabId) {
     if (item.dataset.tab === tabId) item.classList.add("active");
     else item.classList.remove("active");
   });
+
+  // Reset assign mode on tab switch
+  if (state.assigningCell) {
+    state.assigningCell = null;
+    const btn = document.getElementById("btn-finalize-scheduling");
+    if (btn) {
+      btn.textContent = "✅ Финализиране и Одобрение на Назначението";
+      btn.dataset.assignMode = "";
+    }
+  }
 }
 
 // Свързване на слушатели при зареждане
@@ -1417,6 +2076,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const driverSelect = document.getElementById("shift-driver-select");
   const trainSelect = document.getElementById("shift-train-select");
   
+  const depotSelect = document.getElementById("shift-depot-select");
+  if (depotSelect) {
+    depotSelect.addEventListener("change", () => {
+      populateDriverDropdowns();
+      updateTrafficLight();
+    });
+  }
   if (driverSelect) driverSelect.addEventListener("change", updateTrafficLight);
   if (trainSelect) {
     trainSelect.addEventListener("change", (e) => {
@@ -1435,6 +2101,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const routeInfo = document.getElementById("train-route-info");
         if (routeInfo) routeInfo.innerHTML = "Изберете влак, за да видите маршрута му.";
       }
+      populateDriverDropdowns();
       updateTrafficLight();
     });
   }
@@ -1455,7 +2122,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  // Действие при Финализиране на смяна
+  // Действие при Финализиране на смяна / Задаване на машинист
   const btnFinalize = document.getElementById("btn-finalize-scheduling");
   if (btnFinalize) {
     btnFinalize.addEventListener("click", () => {
@@ -1463,8 +2130,62 @@ document.addEventListener("DOMContentLoaded", () => {
       const trainId = trainSelect.value;
       const plannedTime = plannedTimeInput.value;
 
+      // Assign mode - fill driver back to table cell
+      if (state.assigningCell) {
+        if (!driverId || !trainId || !plannedTime) {
+          showToast("Моля, изберете машинист!", "error");
+          return;
+        }
+        const assignation = state.assignations.find(a => a.id === state.assigningCell.rowId);
+        if (assignation) {
+          assignation[state.assigningCell.field] = driverId;
+          saveToLocalStorage();
+          renderAssignationsTable();
+          showToast(`Машинист №${driverId} зададен успешно!`, "success");
+        }
+        state.assigningCell = null;
+        btnFinalize.textContent = "✅ Финализиране и Одобрение на Назначението";
+        btnFinalize.dataset.assignMode = "";
+        btnFinalize.disabled = true;
+        driverSelect.value = "";
+        trainSelect.value = "";
+        const routeInfo = document.getElementById("train-route-info");
+        if (routeInfo) routeInfo.innerHTML = "Изберете влак, за да видите маршрута му.";
+        resetTrafficLight();
+        return;
+      }
+
       if (!driverId || !trainId || !plannedTime) {
         showToast("Моля, попълнете всички полета!", "error");
+        return;
+      }
+
+      // Проверка за предупредителни отсъствия (warn level)
+      const driver = state.drivers.find(d => d.id === driverId);
+      if (driver) {
+        const planned = new Date(plannedTime);
+        for (const abs of driver.absences) {
+          const absStart = new Date(abs.start);
+          const absEnd = new Date(abs.end);
+          if (planned >= absStart && planned <= absEnd) {
+            const behavior = getAbsenceBehavior(abs);
+            if (behavior.blockLevel === 'warn') {
+              const msg = abs.type === 'Vacation'
+                ? `ВНИМАНИЕ! Машинистът има ${behavior.label} до ${formatDate(absEnd)}. Отпускът е само заявен, но не е одобрен. Желаете ли да продължите с назначаването?`
+                : `ВНИМАНИЕ! Машинистът има ${behavior.label} до ${formatDate(absEnd)}. Желаете ли да продължите с назначаването?`;
+              if (!confirm(msg)) {
+                return;
+              }
+              break;
+            }
+          }
+        }
+      }
+
+      // Проверка за дублиране на същата дата
+      const plannedDate = plannedTime.split("T")[0];
+      if (getAssignedDriverIdsOnDate(plannedDate).has(driverId)) {
+        showToast(`Машинистът вече е назначен на ${plannedDate}!`, "error");
         return;
       }
 
@@ -1481,6 +2202,14 @@ document.addEventListener("DOMContentLoaded", () => {
       // Сменяме таба на времевата линия за преглед
       switchTab("gantt-timeline");
       updateUI();
+    });
+  }
+
+  // Свиване/Разширяване на страничното меню
+  const toggleBtn = document.getElementById("sidebar-toggle");
+  if (toggleBtn) {
+    toggleBtn.addEventListener("click", () => {
+      document.querySelector(".app-container").classList.toggle("collapsed");
     });
   }
 });

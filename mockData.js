@@ -1,5 +1,13 @@
 // mockData.js - Статични и начални динамични данни за железопътните бригади
 
+const DEFAULT_POSITION_NORMS = {
+  "Локомотивен машинист": 160,
+  "Помощник-локомотивен машинист": 160,
+  "Инструктор/Депомайстор": 160,
+  "Маневрист": 160,
+  "Стрелочник": 160
+};
+
 const DEFAULT_DRIVERS = [
   {
     id: "1001",
@@ -14,15 +22,21 @@ const DEFAULT_DRIVERS = [
     competencies: ["Серия 40", "Серия 46", "Проба \"А\""],
     monthlyNorm: 160,
     quarterlyNorm: 480,
+    yearlyNorm: 1920,
     monthlyWorked: 135.5,
     quarterlyWorked: 412.0,
+    yearlyWorked: 950.0,
     absences: [
       {
         id: "abs_1",
-        type: "Vacation", // Vacation, Sick, Personal
+        type: "Vacation",
         typeBG: "Платен отпуск",
         start: "2026-05-25T00:00:00",
-        end: "2026-05-28T23:59:59"
+        end: "2026-05-28T23:59:59",
+        requested: true,
+        approved: false,
+        presented: false,
+        explanation: ""
       }
     ]
   },
@@ -42,15 +56,21 @@ const DEFAULT_DRIVERS = [
     competencies: ["Серия 40", "Серия 51", "ТМРВ"],
     monthlyNorm: 160,
     quarterlyNorm: 480,
-    monthlyWorked: 154.0, // Близо до лимита от 160 часа
-    quarterlyWorked: 455.5, // Риск от извънреден труд
+    yearlyNorm: 1920,
+    monthlyWorked: 154.0,
+    quarterlyWorked: 455.5,
+    yearlyWorked: 920.0,
     absences: [
       {
         id: "abs_2",
         type: "Sick",
-        typeBG: "Болничен",
+        typeBG: "Медицински отпуск",
         start: "2026-05-20T00:00:00",
-        end: "2026-05-23T23:59:59" // Активен до края на утрешния ден (текущо е 22 май)
+        end: "2026-05-23T23:59:59",
+        requested: true,
+        approved: false,
+        presented: true,
+        explanation: ""
       }
     ]
   },
@@ -67,9 +87,23 @@ const DEFAULT_DRIVERS = [
     competencies: ["Серия 46", "Серия 55", "Серия 07", "Проба \"А\""],
     monthlyNorm: 160,
     quarterlyNorm: 480,
+    yearlyNorm: 1920,
     monthlyWorked: 110.0,
     quarterlyWorked: 320.0,
-    absences: []
+    yearlyWorked: 580.0,
+    absences: [
+      {
+        id: "abs_4",
+        type: "Service",
+        typeBG: "Служебна ангажираност",
+        start: "2026-05-24T09:00:00",
+        end: "2026-05-24T17:00:00",
+        requested: false,
+        approved: false,
+        presented: false,
+        explanation: "Обучение - нова серия локомотиви"
+      }
+    ]
   },
   {
     id: "1004",
@@ -84,8 +118,10 @@ const DEFAULT_DRIVERS = [
     competencies: ["Серия 40", "Серия 07"],
     monthlyNorm: 160,
     quarterlyNorm: 480,
+    yearlyNorm: 1920,
     monthlyWorked: 122.5,
     quarterlyWorked: 365.0,
+    yearlyWorked: 650.0,
     absences: []
   },
   {
@@ -101,8 +137,10 @@ const DEFAULT_DRIVERS = [
     competencies: ["Серия 40", "Серия 51", "Инструктор/Депомайстор"],
     monthlyNorm: 160,
     quarterlyNorm: 480,
+    yearlyNorm: 1920,
     monthlyWorked: 145.0,
     quarterlyWorked: 420.0,
+    yearlyWorked: 880.0,
     absences: []
   },
   {
@@ -118,15 +156,21 @@ const DEFAULT_DRIVERS = [
     competencies: ["Серия 46", "Серия 51", "Серия 55", "Стрелочник"],
     monthlyNorm: 160,
     quarterlyNorm: 480,
+    yearlyNorm: 1920,
     monthlyWorked: 98.0,
     quarterlyWorked: 290.0,
+    yearlyWorked: 490.0,
     absences: [
       {
         id: "abs_3",
         type: "Personal",
-        typeBG: "Неприсъствен (Лични)",
+        typeBG: "Лична ангажираност",
         start: "2026-05-22T08:00:00",
-        end: "2026-05-22T20:00:00" // Неприсъствен днес
+        end: "2026-05-22T20:00:00",
+        requested: false,
+        approved: false,
+        presented: false,
+        explanation: "Лични ангажименти - банка"
       }
     ]
   },
@@ -143,8 +187,10 @@ const DEFAULT_DRIVERS = [
     competencies: ["Серия 40", "Серия 55", "ТМРВ"],
     monthlyNorm: 160,
     quarterlyNorm: 480,
+    yearlyNorm: 1920,
     monthlyWorked: 130.0,
     quarterlyWorked: 395.0,
+    yearlyWorked: 930.0,
     absences: []
   },
   {
@@ -163,8 +209,10 @@ const DEFAULT_DRIVERS = [
     competencies: ["Серия 40", "Серия 46", "Серия 55", "Проба \"А\""],
     monthlyNorm: 160,
     quarterlyNorm: 480,
+    yearlyNorm: 1920,
     monthlyWorked: 85.0,
     quarterlyWorked: 260.0,
+    yearlyWorked: 425.0,
     absences: []
   }
 ];
