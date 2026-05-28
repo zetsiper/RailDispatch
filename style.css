@@ -108,7 +108,7 @@ sidebar {
   position: relative;
 }
 
-.sidebar-top, .clock-widget {
+.sidebar-top {
   overflow: hidden;
 }
 
@@ -284,49 +284,6 @@ sidebar {
   overflow: hidden;
 }
 
-/* Диспечерски Часовник */
-.clock-widget {
-  padding: 16px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid var(--border-color);
-  margin-top: auto;
-  transition: opacity 0.3s ease, padding 0.3s ease, margin 0.3s ease;
-}
-
-.app-container.collapsed .clock-widget {
-  opacity: 0;
-  padding: 0;
-  margin: 0;
-  border: none;
-  height: 0;
-  overflow: hidden;
-}
-
-.clock-title {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  letter-spacing: 1px;
-  margin-bottom: 4px;
-}
-
-.clock-time {
-  font-family: var(--font-mono);
-  font-size: 1.35rem;
-  font-weight: 700;
-  color: #fff;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.clock-date {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  margin-top: 4px;
-}
-
 /* Основно съдържание */
 main {
   padding: 32px;
@@ -353,39 +310,6 @@ main {
 .page-title p {
   color: var(--text-muted);
   font-size: 0.9rem;
-}
-
-/* Симулатор на времето - плъзгач */
-.time-simulator-card {
-  padding: 12px 20px;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.simulator-controls {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.simulator-label {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--color-warning);
-}
-
-.simulator-slider-wrapper {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 250px;
-}
-
-.simulator-slider {
-  flex-grow: 1;
-  cursor: pointer;
-  accent-color: var(--color-warning);
 }
 
 /* Статистика лента */
@@ -805,6 +729,11 @@ main {
   background: rgba(59,130,246,0.1);
   border-color: var(--color-info);
 }
+.assignations-table td .driver-cell.incompetent {
+  color: #ef4444 !important;
+  border-color: #ef4444 !important;
+  background: rgba(239,68,68,0.1);
+}
 .assignations-table td .btn-remove-row {
   background: none;
   border: none;
@@ -814,6 +743,21 @@ main {
   opacity: 0.5;
   transition: opacity 0.2s;
   padding: 4px;
+}
+.assignations-table td .btn-move-row {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.7rem;
+  padding: 2px 4px;
+  opacity: 0.5;
+  transition: opacity 0.2s;
+}
+.assignations-table td .btn-move-row:hover {
+  opacity: 1;
+  border-color: var(--border-color);
+  border-radius: 4px;
 }
 .assignations-table td .btn-remove-row:hover {
   opacity: 1;
@@ -1430,4 +1374,212 @@ input[disabled], select[disabled], textarea[disabled] {
   display: flex;
   gap: 12px;
   margin-bottom: 16px;
+}
+
+/* Контроли на времевата линия */
+.timeline-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.timeline-controls-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.timeline-controls-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.timeline-filter-select {
+  min-width: 240px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text-main);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.timeline-filter-select:focus {
+  outline: none;
+  border-color: var(--color-info);
+}
+
+.view-toggle {
+  display: flex;
+  gap: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+}
+
+.view-toggle .btn-sm {
+  border-radius: 0;
+  border: none;
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.view-toggle .btn-sm.active {
+  background: var(--color-info);
+  color: #fff;
+}
+
+.view-toggle .btn-sm:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.date-slider-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.date-label {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-warning);
+  white-space: nowrap;
+  min-width: 110px;
+  text-align: center;
+}
+
+.date-slider {
+  width: 160px;
+  cursor: pointer;
+  accent-color: var(--color-info);
+}
+
+/* Месечен календар */
+.month-calendar-wrapper {
+  padding: 16px 0;
+}
+
+.month-calendar-header {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.calendar-day-header {
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  padding: 8px 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.month-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.calendar-cell {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 8px;
+  min-height: 60px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.calendar-cell:hover {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: var(--color-info);
+}
+
+.calendar-cell.empty {
+  background: transparent;
+  border: none;
+  cursor: default;
+  min-height: 0;
+}
+
+.calendar-cell.today {
+  border-color: var(--color-info);
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.2);
+}
+
+.calendar-cell.has-shift {
+  background: rgba(16, 185, 129, 0.05);
+}
+
+.calendar-cell.has-absence {
+  background: rgba(244, 63, 94, 0.05);
+}
+
+.cal-day-number {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.calendar-cell.today .cal-day-number {
+  color: var(--color-info);
+}
+
+.cal-shift-track {
+  position: relative;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 3px;
+  margin: 2px 0;
+  overflow: hidden;
+}
+
+.cal-shift-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--color-success);
+  border-radius: 3px;
+  min-width: 2px;
+  opacity: 0.85;
+}
+
+.cal-indicators {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.cal-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.cal-indicator.cal-shift {
+  background: var(--color-success);
+}
+
+.cal-indicator.cal-rest {
+  background: var(--color-rest);
+}
+
+.cal-indicator.cal-absence {
+  background: var(--color-danger);
 }

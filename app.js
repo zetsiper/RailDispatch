@@ -1,5 +1,11 @@
 // app.js - Логически двигател и визуализация на диспечерския пулт
 
+// Помощна функция за днешната дата
+function getTodayDateStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 // Инициализация на състоянието на системата
 let state = {
   drivers: [],
@@ -8,10 +14,9 @@ let state = {
   positionNorms: {},
   assignations: [],
   assigningCell: null,
-  // Текущо диспечерско време за симулацията: 22 Май 2026г.
-  currentDateStr: "2026-05-22",
-  currentHour: 16, // по подразбиране е 16:00
-  currentMinute: 0
+  timelineDriverFilter: "",
+  timelineViewMode: "24h",
+  timelineDate: getTodayDateStr()
 };
 
 // Зареждане на данни при стартиране
@@ -19,9 +24,7 @@ function initData() {
   const storedDrivers = localStorage.getItem("dispatch_drivers");
   const storedTrains = localStorage.getItem("dispatch_trains");
   const storedShifts = localStorage.getItem("dispatch_shifts");
-  const storedTime = localStorage.getItem("dispatch_sim_time");
   const storedAssignations = localStorage.getItem("dispatch_assignations");
-
   const storedNorms = localStorage.getItem("dispatch_position_norms");
 
   if (storedDrivers && storedTrains && storedShifts) {
@@ -30,14 +33,12 @@ function initData() {
     state.shifts = JSON.parse(storedShifts);
     if (storedAssignations) state.assignations = JSON.parse(storedAssignations);
     
-    // Зареждане на норми по длъжности
     if (storedNorms) {
       state.positionNorms = JSON.parse(storedNorms);
     } else {
       state.positionNorms = typeof DEFAULT_POSITION_NORMS !== 'undefined' ? {...DEFAULT_POSITION_NORMS} : {};
     }
 
-    // Миграция за нови полета на локомотивен персонал
     let needsSave = false;
     state.drivers = state.drivers.map(driver => {
       let migrated = false;
@@ -76,7 +77,6 @@ function initData() {
         else driver.depot = "Русе";
         migrated = true;
       }
-      // Миграция за нови полета на отсъствия
       if (driver.absences) {
         driver.absences = driver.absences.map(abs => {
           if (abs.requested === undefined) abs.requested = true;
@@ -94,7 +94,6 @@ function initData() {
         driver.yearlyWorked = driver.quarterlyWorked ? driver.quarterlyWorked * 4 : 0;
         migrated = true;
       }
-      // Подсигуряване на норми според длъжността
       if (state.positionNorms && state.positionNorms[driver.position] && driver.monthlyNorm !== state.positionNorms[driver.position]) {
         driver.monthlyNorm = state.positionNorms[driver.position];
         driver.quarterlyNorm = driver.monthlyNorm * 3;
@@ -117,7 +116,6 @@ function initData() {
       saveToLocalStorage();
     }
   } else {
-    // Използваме подготвените данни от mockData.js (ако са достъпни)
     state.drivers = typeof DEFAULT_DRIVERS !== 'undefined' ? DEFAULT_DRIVERS : [];
     state.trains = typeof DEFAULT_TRAINS !== 'undefined' ? DEFAULT_TRAINS : [];
     state.shifts = typeof DEFAULT_SHIFTS !== 'undefined' ? DEFAULT_SHIFTS : [];
@@ -125,11 +123,7 @@ function initData() {
     saveToLocalStorage();
   }
 
-  if (storedTime) {
-    const timeObj = JSON.parse(storedTime);
-    state.currentHour = timeObj.hour;
-    state.currentMinute = timeObj.minute;
-  }
+  state.timelineDate = getTodayDateStr();
 }
 
 function saveToLocalStorage() {
@@ -138,13 +132,11 @@ function saveToLocalStorage() {
   localStorage.setItem("dispatch_shifts", JSON.stringify(state.shifts));
   localStorage.setItem("dispatch_assignations", JSON.stringify(state.assignations));
   localStorage.setItem("dispatch_position_norms", JSON.stringify(state.positionNorms));
-  localStorage.setItem("dispatch_sim_time", JSON.stringify({ hour: state.currentHour, minute: state.currentMinute }));
 }
 
-// Форматиране на дати за улеснение
+// Връща текущото реално време
 function getSimulatedDateTime() {
-  const pad = (num) => String(num).padStart(2, '0');
-  return new Date(`${state.currentDateStr}T${pad(state.currentHour)}:${pad(state.currentMinute)}:00`);
+  return new Date();
 }
 
 function formatTime(dateOrStr) {
@@ -164,8 +156,8 @@ function getAssignedDriverIdsOnDate(dateStr) {
       assigned.add(s.driverId);
     }
   });
-  // Проверка в assignations (винаги за следващия ден спрямо currentDateStr)
-  const nextDate = new Date(state.currentDateStr);
+  // Проверка в assignations (винаги за следващия ден)
+  const nextDate = new Date(getTodayDateStr());
   nextDate.setDate(nextDate.getDate() + 1);
   const nextDateStr = `${nextDate.getFullYear()}-${pad(nextDate.getMonth()+1)}-${pad(nextDate.getDate())}`;
   if (dateStr === nextDateStr) {
@@ -181,6 +173,24 @@ function formatDate(dateOrStr) {
   if (!dateOrStr) return "-";
   const date = new Date(dateOrStr);
   return date.toLocaleDateString('bg-BG', { day: '2-digit', month: '2-digit' }) + ' ' + formatTime(date);
+}
+
+function hasCompetencyForTrain(driverId, trainId) {
+  if (!driverId || !trainId) return true;
+  const driver = state.drivers.find(d => d.id === driverId);
+  const train = state.trains.find(t => t.id === trainId);
+  if (!driver || !train) return true;
+  return driver.competencies.includes(train.series);
+}
+
+function checkCompetency(driverId, trainId) {
+  if (!hasCompetencyForTrain(driverId, trainId)) {
+    const driver = state.drivers.find(d => d.id === driverId);
+    const train = state.trains.find(t => t.id === trainId);
+    showToast(`❌ ${driver ? driver.name : 'Машинист №'+driverId} няма правоспособност за ${train ? train.series : 'тази серия'}!`, "error");
+    return false;
+  }
+  return true;
 }
 
 // ==========================================
@@ -463,24 +473,32 @@ function renderGanttTimeline() {
   const gridContainer = document.getElementById("gantt-grid");
   if (!gridContainer) return;
 
-  // Изчистване на редовете с изключение на заглавната лента с часове
   const hourRow = gridContainer.querySelector(".timeline-hours-row");
   gridContainer.innerHTML = "";
   gridContainer.appendChild(hourRow);
 
-  // Сортиране на водачите по име
-  const sortedDrivers = [...state.drivers].sort((a,b) => a.name.localeCompare(b.name, 'bg'));
+  const selectedDateStr = state.timelineDate;
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+  let filteredDrivers = [...state.drivers];
+  if (state.timelineDriverFilter) {
+    if (state.timelineDriverFilter.startsWith("depot:")) {
+      const depot = state.timelineDriverFilter.slice(6);
+      filteredDrivers = filteredDrivers.filter(d => d.depot === depot);
+    } else {
+      filteredDrivers = filteredDrivers.filter(d => d.id === state.timelineDriverFilter);
+    }
+  }
+  const sortedDrivers = filteredDrivers.sort((a,b) => a.name.localeCompare(b.name, 'bg'));
 
   sortedDrivers.forEach(driver => {
-    // Взимаме текущото състояние на водача за деня
     const driverState = getDriverStateAtCurrentTime(driver.id);
     
-    // Създаване на ред за Gantt
     const row = document.createElement("div");
     row.className = "timeline-row";
     row.dataset.driverId = driver.id;
 
-    // Лява клетка с метаданни за водача
     const metaCell = document.createElement("div");
     metaCell.className = "driver-meta-cell";
     
@@ -493,7 +511,7 @@ function renderGanttTimeline() {
       statusClass = "absent";
       statusBG = driverState.absenceType;
     } else if (driverState.status === "active") {
-      statusClass = "resting"; // Цветът е оранжев/активен
+      statusClass = "resting";
       statusBG = "На смяна";
     }
 
@@ -511,34 +529,28 @@ function renderGanttTimeline() {
       </div>
     `;
 
-    // Клик върху метаданните отваря формата за планиране с преселектиран водач
     metaCell.style.cursor = "pointer";
     metaCell.addEventListener("click", () => {
       openSchedulingFormForDriver(driver.id);
     });
 
-    // Дясна клетка с времеви блокове
     const barsCell = document.createElement("div");
     barsCell.className = "timeline-bars-cell";
 
-    // Начертаване на вертикалния диспечерски маркер
     const marker = document.createElement("div");
     marker.className = "current-time-marker";
-    const markerPos = ((state.currentHour * 60 + state.currentMinute) / (24 * 60)) * 100;
+    const markerPos = (currentMinutes / (24 * 60)) * 100;
     marker.style.left = `${markerPos}%`;
     barsCell.appendChild(marker);
 
-    // Взимаме всички активности за този шофьор, засичащи текущия ден
-    const dayStart = new Date(`${state.currentDateStr}T00:00:00`);
-    const dayEnd = new Date(`${state.currentDateStr}T23:59:59`);
+    const dayStart = new Date(`${selectedDateStr}T00:00:00`);
+    const dayEnd = new Date(`${selectedDateStr}T23:59:59`);
 
-    // 1. Смени за деня
     const driverDayShifts = state.shifts.filter(s => s.driverId === driver.id && s.status !== 'cancelled');
     
     driverDayShifts.forEach(shift => {
       const appTime = new Date(shift.appearancePlanned);
       
-      // Блок за самата смяна
       const startLimit = Math.max(appTime, dayStart);
       const shiftEnd = shift.releaseActual ? new Date(shift.releaseActual) : getSimulatedDateTime();
       const endLimit = Math.min(shiftEnd, dayEnd);
@@ -562,7 +574,6 @@ function renderGanttTimeline() {
           <span class="block-time">${formatTime(appTime)} - ${shift.releaseActual ? formatTime(shift.releaseActual) : "сега"}</span>
         `;
 
-        // Клик върху смяна отваря панела за приключване или логване
         block.addEventListener("click", (e) => {
           e.stopPropagation();
           openShiftManagementModal(shift);
@@ -571,7 +582,6 @@ function renderGanttTimeline() {
         barsCell.appendChild(block);
       }
 
-      // Блок за 16-часовата ПОЧИВКА след освобождаване
       if (shift.releaseActual) {
         const relTime = new Date(shift.releaseActual);
         const restEndTime = new Date(relTime.getTime() + 16 * 60 * 60 * 1000);
@@ -597,7 +607,6 @@ function renderGanttTimeline() {
       }
     });
 
-    // 2. Отсъствия за деня
     driver.absences.forEach(absence => {
       const absStart = new Date(absence.start);
       const absEnd = new Date(absence.end);
@@ -628,7 +637,6 @@ function renderGanttTimeline() {
       }
     });
 
-    // Клик върху празно място на времевата скала отваря формата за планиране
     barsCell.addEventListener("click", () => {
       openSchedulingFormForDriver(driver.id);
     });
@@ -639,8 +647,227 @@ function renderGanttTimeline() {
   });
 }
 
+// Попълване на падащото меню за филтриране на служители във времевата линия
+function populateTimelineDriverFilter() {
+  const sel = document.getElementById("timeline-driver-filter");
+  if (!sel) return;
+  const currentVal = sel.value;
+  sel.innerHTML = `<option value="">-- Всички служители --</option>`;
+
+  const depotOrder = ["Русе", "Плевен", "Горна Оряховица", "Каспичан"];
+  const grouped = {};
+  state.drivers.forEach(d => {
+    if (!grouped[d.depot]) grouped[d.depot] = [];
+    grouped[d.depot].push(d);
+  });
+
+  depotOrder.forEach(depot => {
+    const drivers = grouped[depot];
+    if (!drivers || drivers.length === 0) return;
+    const depotOpt = document.createElement("option");
+    depotOpt.value = `depot:${depot}`;
+    depotOpt.textContent = `🚉 Депо ${depot} (всички)`;
+    sel.appendChild(depotOpt);
+    const group = document.createElement("optgroup");
+    group.label = `Депо ${depot}`;
+    drivers.sort((a, b) => a.name.localeCompare(b.name, 'bg')).forEach(d => {
+      const opt = document.createElement("option");
+      opt.value = d.id;
+      opt.textContent = d.name;
+      group.appendChild(opt);
+    });
+    sel.appendChild(group);
+  });
+
+  if (currentVal) sel.value = currentVal;
+}
+
+// Актуализиране на заглавието на времевата линия
+function updateTimelineTitle() {
+  const titleEl = document.getElementById("timeline-title");
+  if (!titleEl) return;
+  if (state.timelineViewMode === "24h") {
+    const d = new Date(state.timelineDate);
+    const bgMonths = ["Януари","Февруари","Март","Април","Май","Юни","Юли","Август","Септември","Октомври","Ноември","Декември"];
+    titleEl.textContent = `24-часов графичен поглед — ${d.getDate()} ${bgMonths[d.getMonth()]} ${d.getFullYear()}г.`;
+  } else {
+    const now = new Date();
+    const bgMonths = ["Януари","Февруари","Март","Април","Май","Юни","Юли","Август","Септември","Октомври","Ноември","Декември"];
+    titleEl.textContent = `Месечен календар — ${bgMonths[now.getMonth()]} ${now.getFullYear()}г.`;
+  }
+}
+
+// Актуализиране на плъзгача за дати в 24-часовия изглед
+function updateTimelineDateSlider() {
+  const wrapper = document.getElementById("date-slider-wrapper");
+  const slider = document.getElementById("timeline-date-slider");
+  const label = document.getElementById("timeline-date-label");
+  if (!slider || !label) return;
+
+  if (state.timelineViewMode === "24h") {
+    if (wrapper) wrapper.style.display = "flex";
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    slider.min = 1;
+    slider.max = daysInMonth;
+    const currentDay = parseInt(state.timelineDate.split('-')[2]) || now.getDate();
+    slider.value = Math.min(currentDay, daysInMonth);
+    const bgMonths = ["Януари","Февруари","Март","Април","Май","Юни","Юли","Август","Септември","Октомври","Ноември","Декември"];
+    const d = new Date(year, month, parseInt(slider.value));
+    label.textContent = `${d.getDate()} ${bgMonths[d.getMonth()]} ${d.getFullYear()}г.`;
+  } else {
+    if (wrapper) wrapper.style.display = "none";
+  }
+}
+
+// Рендиране на месечен календар
+function renderMonthCalendar() {
+  const container = document.getElementById("month-calendar");
+  if (!container) return;
+
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const today = now.getDate();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDayOfWeek = new Date(year, month, 1).getDay();
+  const bgDays = ["Пон","Вто","Сря","Чет","Пет","Съб","Нед"];
+
+  container.innerHTML = "";
+
+  const header = document.createElement("div");
+  header.className = "month-calendar-header";
+  bgDays.forEach(d => {
+    const cell = document.createElement("div");
+    cell.className = "calendar-day-header";
+    cell.textContent = d;
+    header.appendChild(cell);
+  });
+  container.appendChild(header);
+
+  const grid = document.createElement("div");
+  grid.className = "month-calendar-grid";
+
+  // Празни клетки за първите дни
+  const startOffset = firstDayOfWeek === 0 ? 6 : firstDayOfWeek - 1;
+  for (let i = 0; i < startOffset; i++) {
+    const empty = document.createElement("div");
+    empty.className = "calendar-cell empty";
+    grid.appendChild(empty);
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const cell = document.createElement("div");
+    cell.className = "calendar-cell";
+    if (day === today) cell.classList.add("today");
+
+    const dayStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const dayStart = new Date(`${dayStr}T00:00:00`);
+    const dayEnd = new Date(`${dayStr}T23:59:59`);
+
+    let driversToShow = [...state.drivers];
+    if (state.timelineDriverFilter) {
+      if (state.timelineDriverFilter.startsWith("depot:")) {
+        const depot = state.timelineDriverFilter.slice(6);
+        driversToShow = driversToShow.filter(d => d.depot === depot);
+      } else {
+        driversToShow = driversToShow.filter(d => d.id === state.timelineDriverFilter);
+      }
+    }
+
+    const dayShifts = [];
+    const dayHasAbsence = [];
+
+    const dayEndMs = dayEnd.getTime();
+    const dayStartMs = dayStart.getTime();
+    const dayDurationMs = 24 * 60 * 60 * 1000;
+
+    for (const driver of driversToShow) {
+      const driverShifts = state.shifts.filter(s => s.driverId === driver.id && s.status !== 'cancelled');
+      driverShifts.forEach(shift => {
+        const appTime = new Date(shift.appearancePlanned);
+        const relTime = shift.releaseActual ? new Date(shift.releaseActual) : null;
+        if (appTime <= dayEnd && (!relTime || relTime >= dayStart)) {
+          const overlapStart = Math.max(appTime.getTime(), dayStartMs);
+          const overlapEnd = relTime ? Math.min(relTime.getTime(), dayEndMs) : Math.min(Date.now(), dayEndMs);
+          const leftPct = ((overlapStart - dayStartMs) / dayDurationMs) * 100;
+          const widthPct = ((overlapEnd - overlapStart) / dayDurationMs) * 100;
+          dayShifts.push({ shift, leftPct, widthPct });
+        }
+      });
+
+      driver.absences.forEach(abs => {
+        const absStart = new Date(abs.start);
+        const absEnd = new Date(abs.end);
+        if (absStart <= dayEnd && absEnd >= dayStart) {
+          dayHasAbsence.push(abs);
+        }
+      });
+    }
+
+    const hasAbsence = dayHasAbsence.length > 0;
+    const hasShift = dayShifts.length > 0;
+
+    const absDot = hasAbsence ? '<span class="cal-indicator cal-absence"></span>' : '';
+    const restDot = (() => {
+      for (const d of driversToShow) {
+        const completedShifts = state.shifts
+          .filter(s => s.driverId === d.id && s.status === 'completed' && s.releaseActual)
+          .sort((a, b) => new Date(b.releaseActual) - new Date(a.releaseActual));
+        for (const s of completedShifts) {
+          const relTime = new Date(s.releaseActual);
+          const restEnd = new Date(relTime.getTime() + 16 * 60 * 60 * 1000);
+          if (dayStartMs >= relTime.getTime() && dayStartMs < restEnd.getTime()) {
+            return '<span class="cal-indicator cal-rest"></span>';
+          }
+        }
+      }
+      return '';
+    })();
+
+    let shiftBarsHTML = '';
+    if (hasShift) {
+      shiftBarsHTML = '<div class="cal-shift-track">';
+      dayShifts.forEach(({ shift, leftPct, widthPct }) => {
+        const appStr = formatTime(shift.appearancePlanned);
+        const relStr = shift.releaseActual ? formatTime(shift.releaseActual) : 'сега';
+        shiftBarsHTML += `<div class="cal-shift-bar" style="left:${leftPct}%;width:${Math.max(widthPct, 2)}%;" title="${shift.trainId} (${appStr} - ${relStr})"></div>`;
+      });
+      shiftBarsHTML += '</div>';
+    }
+
+    const dayOfWeek = new Date(year, month, day).getDay();
+    const bgDayIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    let titleInfo = `${day} ${bgDays[bgDayIndex]}`;
+    if (hasShift) {
+      titleInfo += `\nДежурства: ${dayShifts.map(s => `${s.shift.trainId} (${formatTime(s.shift.appearancePlanned)}-${s.shift.releaseActual ? formatTime(s.shift.releaseActual) : 'сега'})`).join(", ")}`;
+    }
+    if (hasAbsence) {
+      titleInfo += `\nОтсъствия: ${dayHasAbsence.map(a => a.typeBG || a.type).join(", ")}`;
+    }
+
+    cell.innerHTML = `<div class="cal-day-number">${day}</div>${shiftBarsHTML}<div class="cal-indicators">${restDot}${absDot}</div>`;
+    cell.title = titleInfo;
+
+    if (hasAbsence) cell.classList.add("has-absence");
+    if (hasShift) cell.classList.add("has-shift");
+
+    cell.addEventListener("click", () => {
+      state.timelineDate = dayStr;
+      state.timelineViewMode = "24h";
+      updateUI();
+    });
+
+    grid.appendChild(cell);
+  }
+
+  container.appendChild(grid);
+}
+
 /**
- * Изчислява състоянието на даден шофьор спрямо сегашното диспечерско време
+ * Изчислява състоянието на даден шофьор спрямо сегашното време
  */
 function getDriverStateAtCurrentTime(driverId) {
   const driver = state.drivers.find(d => d.id === driverId);
@@ -701,7 +928,7 @@ function populateDriverDropdowns() {
   if (!driverSelect) return;
 
   const currentSelection = driverSelect.value;
-  driverSelect.innerHTML = `<option value="">-- Изберете локомотивен машинист --</option>`;
+  driverSelect.innerHTML = `<option value="">-- Празно --</option>`;
 
   // Взимаме планираното време от формата
   const plannedTimeInput = document.getElementById("shift-planned-time");
@@ -724,7 +951,7 @@ function populateDriverDropdowns() {
   if (plannedTimeInput && plannedTimeInput.value) {
     targetDateStr = plannedTimeInput.value.split("T")[0];
   } else {
-    targetDateStr = state.currentDateStr;
+    targetDateStr = getTodayDateStr();
   }
   const alreadyAssigned = getAssignedDriverIdsOnDate(targetDateStr);
 
@@ -906,7 +1133,7 @@ function renderDriverCard(driver) {
   if (driver.quarterlyWorked >= driver.quarterlyNorm - 30) qBarClass = "warning";
 
   // Годишен извънреден труд = общо отработено - норма за изминалите месеци
-  const monthsElapsed = parseInt(state.currentDateStr.split('-')[1]) || 5;
+  const monthsElapsed = new Date().getMonth() + 1;
   const expectedYtd = monthsElapsed * driver.monthlyNorm;
   const yearlyOvertime = Math.max(0, driver.yearlyWorked - expectedYtd);
   let yBarClass = "normal";
@@ -1681,7 +1908,7 @@ function showAbsenceModal(driverId, absenceId = null) {
     document.getElementById("modal-absence-explanation").value = "";
     const now = getSimulatedDateTime();
     const pad = (n) => String(n).padStart(2, '0');
-    const startStr = `${state.currentDateStr}T${pad(state.currentHour)}:${pad(state.currentMinute)}`;
+    const startStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
     document.getElementById("modal-absence-start").value = startStr;
     document.getElementById("modal-absence-end").value = startStr;
   }
@@ -1806,7 +2033,7 @@ function renderAssignationsTable() {
 
   const nextDayEl = document.getElementById("assignations-date");
   if (nextDayEl) {
-    const nextDate = new Date(state.currentDateStr);
+    const nextDate = new Date(getTodayDateStr());
     nextDate.setDate(nextDate.getDate() + 1);
     const bgMonths = ["Януари","Февруари","Март","Април","Май","Юни","Юли","Август","Септември","Октомври","Ноември","Декември"];
     nextDayEl.textContent = `${nextDate.getDate()} ${bgMonths[nextDate.getMonth()]} ${nextDate.getFullYear()}г.`;
@@ -1818,7 +2045,7 @@ function renderAssignationsTable() {
     return;
   }
 
-  state.assignations.forEach(a => {
+  state.assignations.forEach((a, i) => {
     const tr = document.createElement("tr");
     const driverLabel = a.driverId
       ? `${a.driverId}`
@@ -1826,6 +2053,10 @@ function renderAssignationsTable() {
     const assistantLabel = a.assistantId
       ? `${a.assistantId}`
       : "Избери...";
+    const driverIncompetent = a.driverId && a.trainId && !hasCompetencyForTrain(a.driverId, a.trainId);
+    const asstIncompetent = a.assistantId && a.trainId && !hasCompetencyForTrain(a.assistantId, a.trainId);
+    const first = i === 0;
+    const last = i === state.assignations.length - 1;
 
     tr.innerHTML = `
       <td><input type="time" value="${a.time}" data-id="${a.id}" class="asgn-time-input"></td>
@@ -1834,13 +2065,17 @@ function renderAssignationsTable() {
         <select data-id="${a.id}" class="asgn-train-select">
           <option value="">-- Изберете --</option>
           ${state.trains.map(t =>
-            `<option value="${t.id}"${t.id === a.trainId ? " selected" : ""}>${t.id}</option>`
+            `<option value="${t.id}"${t.id === a.trainId ? " selected" : ""}>${t.id.replace("Влак ", "")}</option>`
           ).join("")}
         </select>
       </td>
-      <td><span class="driver-cell${a.driverId ? " filled" : ""}" data-id="${a.id}" data-field="driverId">${driverLabel}</span></td>
-      <td><span class="driver-cell${a.assistantId ? " filled" : ""}" data-id="${a.id}" data-field="assistantId">${assistantLabel}</span></td>
-      <td><button class="btn-remove-row" data-id="${a.id}">&times;</button></td>
+      <td><span class="driver-cell${a.driverId ? " filled" : ""}${driverIncompetent ? " incompetent" : ""}" data-id="${a.id}" data-field="driverId">${driverLabel}</span></td>
+      <td><span class="driver-cell${a.assistantId ? " filled" : ""}${asstIncompetent ? " incompetent" : ""}" data-id="${a.id}" data-field="assistantId">${assistantLabel}</span></td>
+      <td>
+        <button class="btn-move-row" data-id="${a.id}" data-dir="up" ${first ? "disabled" : ""} title="Премести нагоре">▲</button>
+        <button class="btn-move-row" data-id="${a.id}" data-dir="down" ${last ? "disabled" : ""} title="Премести надолу">▼</button>
+        <button class="btn-remove-row" data-id="${a.id}">&times;</button>
+      </td>
     `;
 
     tbody.appendChild(tr);
@@ -1864,7 +2099,24 @@ function renderAssignationsTable() {
   tbody.querySelectorAll(".asgn-train-select").forEach(sel => {
     sel.addEventListener("change", e => {
       const a = state.assignations.find(x => x.id === e.target.dataset.id);
-      if (a) { a.trainId = e.target.value; saveToLocalStorage(); }
+      if (!a) return;
+      a.trainId = e.target.value;
+      saveToLocalStorage();
+      const container = sel.closest("tr");
+      const driverCell = container && container.querySelector('.driver-cell[data-field="driverId"]');
+      const asstCell = container && container.querySelector('.driver-cell[data-field="assistantId"]');
+      if (a.driverId) {
+        const ok = checkCompetency(a.driverId, a.trainId);
+        if (driverCell) driverCell.classList.toggle("incompetent", !ok);
+      } else if (driverCell) {
+        driverCell.classList.remove("incompetent");
+      }
+      if (a.assistantId) {
+        const ok = checkCompetency(a.assistantId, a.trainId);
+        if (asstCell) asstCell.classList.toggle("incompetent", !ok);
+      } else if (asstCell) {
+        asstCell.classList.remove("incompetent");
+      }
     });
   });
 
@@ -1879,6 +2131,20 @@ function renderAssignationsTable() {
   tbody.querySelectorAll(".btn-remove-row").forEach(btn => {
     btn.addEventListener("click", e => {
       removeAssignationRow(e.currentTarget.dataset.id);
+    });
+  });
+
+  tbody.querySelectorAll(".btn-move-row").forEach(btn => {
+    btn.addEventListener("click", e => {
+      const id = e.currentTarget.dataset.id;
+      const dir = e.currentTarget.dataset.dir;
+      const idx = state.assignations.findIndex(a => a.id === id);
+      if (idx === -1) return;
+      const swapIdx = dir === "up" ? idx - 1 : idx + 1;
+      if (swapIdx < 0 || swapIdx >= state.assignations.length) return;
+      [state.assignations[idx], state.assignations[swapIdx]] = [state.assignations[swapIdx], state.assignations[idx]];
+      saveToLocalStorage();
+      renderAssignationsTable();
     });
   });
 }
@@ -1897,7 +2163,7 @@ function startAssigningDriver(rowId, field) {
     trainSelect.dispatchEvent(new Event("change"));
   }
   if (timeInput) {
-    const nextDate = new Date(state.currentDateStr);
+    const nextDate = new Date(getTodayDateStr());
     nextDate.setDate(nextDate.getDate() + 1);
     const pad = n => String(n).padStart(2, "0");
     const timeParts = assignation.time.split(":");
@@ -1920,30 +2186,13 @@ function startAssigningDriver(rowId, field) {
 }
 
 function updateUI() {
-  renderGanttTimeline();
-  populateDepotDropdowns();
-  populateDriverDropdowns();
-  populateTrainDropdowns();
-  renderAssignationsTable();
-  renderCrewProfiles();
-  renderTrainsManagement();
-  renderTrainTemplates();
-  renderRecentLogs();
-  
-  // Актуализиране на часовника на диспечера
-  const pad = (num) => String(num).padStart(2, '0');
-  const clockText = `${pad(state.currentHour)}:${pad(state.currentMinute)}`;
-  const dateText = `22 Май 2026г.`;
-  
-  const clockEl = document.getElementById("sim-clock-time");
-  const dateEl = document.getElementById("sim-clock-date");
-  if (clockEl) clockEl.textContent = clockText;
-  if (dateEl) dateEl.textContent = dateText;
+  const now = new Date();
+  const todayStr = getTodayDateStr();
 
-  // Актуализиране на датата за "Назначен персонал" (следващия ден)
+  // Актуализиране на датата за "Назначен персонал"
   const nextDayEl = document.getElementById("next-day-date");
   if (nextDayEl) {
-    const nextDate = new Date(state.currentDateStr);
+    const nextDate = new Date(todayStr);
     nextDate.setDate(nextDate.getDate() + 1);
     const bgMonths = ["Януари", "Февруари", "Март", "Април", "Май", "Юни", "Юли", "Август", "Септември", "Октомври", "Ноември", "Декември"];
     const day = nextDate.getDate();
@@ -1952,7 +2201,33 @@ function updateUI() {
     nextDayEl.textContent = `${day} ${month} ${year}г.`;
   }
 
-  // Изчисляване на статистиката спрямо диспечерското време
+  // Актуализиране на контролите на времевата линия
+  populateTimelineDriverFilter();
+  updateTimelineDateSlider();
+  updateTimelineTitle();
+
+  // Рендиране според избрания изглед
+  const ganttContent = document.getElementById("gantt-timeline-container");
+  const calendarContainer = document.getElementById("month-calendar");
+  if (state.timelineViewMode === "24h") {
+    if (ganttContent) ganttContent.style.display = "block";
+    if (calendarContainer) calendarContainer.style.display = "none";
+    renderGanttTimeline();
+  } else {
+    if (ganttContent) ganttContent.style.display = "none";
+    if (calendarContainer) calendarContainer.style.display = "block";
+    renderMonthCalendar();
+  }
+
+  populateDepotDropdowns();
+  populateDriverDropdowns();
+  populateTrainDropdowns();
+  renderAssignationsTable();
+  renderCrewProfiles();
+  renderTrainsManagement();
+  renderTrainTemplates();
+  renderRecentLogs();
+
   let totalDrivers = state.drivers.length;
   let availableDrivers = 0;
   let onShiftDrivers = 0;
@@ -2031,11 +2306,12 @@ function switchTab(tabId) {
 document.addEventListener("DOMContentLoaded", () => {
   initData();
 
-  // Инициализиране на формата за планиране с времето на диспечера
+  // Инициализиране на формата за планиране с текущото време
   const plannedTimeInput = document.getElementById("shift-planned-time");
   if (plannedTimeInput) {
+    const now = new Date();
     const pad = (num) => String(num).padStart(2, '0');
-    plannedTimeInput.value = `2026-05-22T${pad(state.currentHour)}:${pad(state.currentMinute)}`;
+    plannedTimeInput.value = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
   }
 
   // Обновяване на интерфейса
@@ -2049,25 +2325,36 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  // Слушател на плъзгача за времето
-  const timeSlider = document.getElementById("sim-time-slider");
-  if (timeSlider) {
-    timeSlider.value = state.currentHour * 60 + state.currentMinute;
-    timeSlider.addEventListener("input", (e) => {
-      const minutesTotal = parseInt(e.target.value);
-      state.currentHour = Math.floor(minutesTotal / 60);
-      state.currentMinute = minutesTotal % 60;
-      
-      const label = document.getElementById("sim-time-slider-val");
-      const pad = (num) => String(num).padStart(2, '0');
-      if (label) label.textContent = `${pad(state.currentHour)}:${pad(state.currentMinute)}ч`;
+  // Слушатели за контролите на времевата линия
+  const driverFilter = document.getElementById("timeline-driver-filter");
+  if (driverFilter) {
+    driverFilter.addEventListener("change", () => {
+      state.timelineDriverFilter = driverFilter.value;
+      updateUI();
+    });
+  }
 
-      // Променяме и планираното време във формата
-      if (plannedTimeInput) {
-        plannedTimeInput.value = `2026-05-22T${pad(state.currentHour)}:${pad(state.currentMinute)}`;
+  const viewToggles = document.querySelectorAll(".view-toggle-btn");
+  viewToggles.forEach(btn => {
+    btn.addEventListener("click", () => {
+      viewToggles.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      state.timelineViewMode = btn.dataset.view;
+      if (state.timelineViewMode === "24h") {
+        state.timelineDate = getTodayDateStr();
       }
+      updateUI();
+    });
+  });
 
-      saveToLocalStorage();
+  const dateSlider = document.getElementById("timeline-date-slider");
+  if (dateSlider) {
+    dateSlider.addEventListener("input", () => {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth();
+      const day = parseInt(dateSlider.value);
+      state.timelineDate = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
       updateUI();
     });
   }
@@ -2088,7 +2375,6 @@ document.addEventListener("DOMContentLoaded", () => {
     trainSelect.addEventListener("change", (e) => {
       const selectedTrain = state.trains.find(t => t.id === e.target.value);
       if (selectedTrain) {
-        // Автоматично попълване на маршрута и правоспособността в лебела за информация
         const routeInfo = document.getElementById("train-route-info");
         if (routeInfo) {
           routeInfo.innerHTML = `
@@ -2107,7 +2393,6 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   if (plannedTimeInput) {
     plannedTimeInput.addEventListener("change", () => {
-      // При промяна на планираното време, актуализираме списъка с шофьори (тъй като някой може да е в отпуск в това време)
       populateDriverDropdowns();
       updateTrafficLight();
     });
@@ -2130,19 +2415,48 @@ document.addEventListener("DOMContentLoaded", () => {
       const trainId = trainSelect.value;
       const plannedTime = plannedTimeInput.value;
 
-      // Assign mode - fill driver back to table cell
       if (state.assigningCell) {
-        if (!driverId || !trainId || !plannedTime) {
-          showToast("Моля, изберете машинист!", "error");
+        if (!driverId) {
+          const assignation = state.assignations.find(a => a.id === state.assigningCell.rowId);
+          if (assignation && assignation[state.assigningCell.field]) {
+            if (!confirm("Премахване на назначението?")) return;
+            assignation[state.assigningCell.field] = null;
+            saveToLocalStorage();
+            renderAssignationsTable();
+            showToast("Назначението е премахнато.", "info");
+            state.assigningCell = null;
+            btnFinalize.textContent = "✅ Финализиране и Одобрение на Назначението";
+            btnFinalize.dataset.assignMode = "";
+            btnFinalize.disabled = true;
+            driverSelect.value = "";
+            trainSelect.value = "";
+            const routeInfo = document.getElementById("train-route-info");
+            if (routeInfo) routeInfo.innerHTML = "Изберете влак, за да видите маршрута му.";
+            resetTrafficLight();
+            return;
+          }
+          showToast("Няма назначение за премахване.", "error");
           return;
         }
+
         const assignation = state.assignations.find(a => a.id === state.assigningCell.rowId);
-        if (assignation) {
-          assignation[state.assigningCell.field] = driverId;
-          saveToLocalStorage();
-          renderAssignationsTable();
-          showToast(`Машинист №${driverId} зададен успешно!`, "success");
+        if (!assignation) return;
+        if (!trainId || !plannedTime) {
+          showToast("Моля, изберете влак!", "error");
+          return;
         }
+        if (assignation.trainId && !hasCompetencyForTrain(driverId, assignation.trainId)) {
+          const driver = state.drivers.find(d => d.id === driverId);
+          const train = state.trains.find(t => t.id === assignation.trainId);
+          showToast(`❌ ${driver ? driver.name : 'Машинист №'+driverId} няма правоспособност за ${train ? train.series : 'тази серия'}!`, "error");
+          return;
+        }
+
+        assignation[state.assigningCell.field] = driverId;
+        saveToLocalStorage();
+        renderAssignationsTable();
+        showToast(`Машинист №${driverId} зададен успешно!`, "success");
+
         state.assigningCell = null;
         btnFinalize.textContent = "✅ Финализиране и Одобрение на Назначението";
         btnFinalize.dataset.assignMode = "";
@@ -2155,53 +2469,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      if (!driverId || !trainId || !plannedTime) {
-        showToast("Моля, попълнете всички полета!", "error");
-        return;
-      }
-
-      // Проверка за предупредителни отсъствия (warn level)
-      const driver = state.drivers.find(d => d.id === driverId);
-      if (driver) {
-        const planned = new Date(plannedTime);
-        for (const abs of driver.absences) {
-          const absStart = new Date(abs.start);
-          const absEnd = new Date(abs.end);
-          if (planned >= absStart && planned <= absEnd) {
-            const behavior = getAbsenceBehavior(abs);
-            if (behavior.blockLevel === 'warn') {
-              const msg = abs.type === 'Vacation'
-                ? `ВНИМАНИЕ! Машинистът има ${behavior.label} до ${formatDate(absEnd)}. Отпускът е само заявен, но не е одобрен. Желаете ли да продължите с назначаването?`
-                : `ВНИМАНИЕ! Машинистът има ${behavior.label} до ${formatDate(absEnd)}. Желаете ли да продължите с назначаването?`;
-              if (!confirm(msg)) {
-                return;
-              }
-              break;
-            }
-          }
-        }
-      }
-
-      // Проверка за дублиране на същата дата
-      const plannedDate = plannedTime.split("T")[0];
-      if (getAssignedDriverIdsOnDate(plannedDate).has(driverId)) {
-        showToast(`Машинистът вече е назначен на ${plannedDate}!`, "error");
-        return;
-      }
-
-      createShift(driverId, trainId, new Date(plannedTime).toISOString());
-      
-      // Нулиране на формата
-      driverSelect.value = "";
-      trainSelect.value = "";
-      const routeInfo = document.getElementById("train-route-info");
-      if (routeInfo) routeInfo.innerHTML = "Изберете влак, за да видите маршрута му.";
-      resetTrafficLight();
-      btnFinalize.disabled = true;
-
-      // Сменяме таба на времевата линия за преглед
-      switchTab("gantt-timeline");
-      updateUI();
+      showToast("Първо изберете клетка за машинист или помощник-машинист от таблицата с заявени влакове!", "error");
     });
   }
 
