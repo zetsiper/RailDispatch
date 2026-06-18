@@ -100,8 +100,12 @@
           <h3 id="timeline-title" style="font-size: 1.2rem; font-weight: 700;">24-часов графичен поглед</h3>
           <div class="timeline-legend">
             <div class="legend-item">
-              <span class="legend-color duty"></span>
-              <span>Дежурство / Влак</span>
+              <span class="legend-color duty-planned"></span>
+              <span>Планирано дежурство</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-color duty-actual"></span>
+              <span>Реализирано дежурство</span>
             </div>
             <div class="legend-item">
               <span class="legend-color rest"></span>
@@ -130,8 +134,10 @@
               <button class="btn btn-sm view-toggle-btn" data-view="month">Месец</button>
             </div>
             <div class="date-slider-wrapper" id="date-slider-wrapper">
+              <button class="btn btn-sm" id="prev-month-btn" title="Предишен месец">&larr;</button>
               <span id="timeline-date-label" class="date-label">22 Май 2026</span>
               <input type="range" id="timeline-date-slider" min="1" max="31" class="date-slider">
+              <button class="btn btn-sm" id="next-month-btn" title="Следващ месец">&rarr;</button>
             </div>
           </div>
         </div>
@@ -397,81 +403,78 @@
           </div>
         </div>
       </div>
-  <!-- Модал 1: Управление на Смяна (Отчитане, Закъснение, Отмяна) -->
   <div class="modal-overlay" id="shift-modal">
-    <div class="glass modal-content">
+    <div class="glass modal-content" style="max-width:600px;">
       <div class="modal-header">
-        <h3 id="modal-shift-title">Управление на дежурство</h3>
-        <button class="close-btn">&times;</button>
+        <h3 id="modal-shift-title">Отчитане на дежурство</h3>
+        <button class="close-btn" onclick="closeShiftModal()">&times;</button>
       </div>
       <div class="panel-body">
-        
-        <!-- Метаданни за дежурството -->
-        <div style="background: rgba(0,0,0,0.15); padding: 14px; border-radius: 10px; margin-bottom: 16px; font-size: 0.85rem; display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-          <div>👤 <strong>Машинист:</strong> <span id="modal-shift-driver">-</span></div>
-          <div>📍 <strong>Влак / Маршрут:</strong> <span id="modal-shift-route">-</span></div>
-          <div>📅 <strong>Планирано явяване:</strong> <span id="modal-shift-planned">-</span></div>
-          <div>⌛ <strong>Реално явяване:</strong> <span id="modal-shift-actual">-</span></div>
+        <div style="background:rgba(0,0,0,0.15);padding:14px;border-radius:10px;margin-bottom:16px;font-size:0.85rem;display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div><strong>Машинист:</strong> <span id="modal-shift-driver">-</span></div>
+          <div><strong>Влак / Маршрут:</strong> <span id="modal-shift-route">-</span></div>
+          <div><strong>Планирана продълж.:</strong> <span id="modal-shift-planned-dur">-</span></div>
+          <div><strong>Реална продълж.:</strong> <span id="modal-shift-actual-dur">-</span></div>
         </div>
 
-        <!-- АКТИВНИ КОНТРОЛИ (За затваряне на смяна и събития) -->
+        <div class="form-group" style="border-top:1px solid var(--border-color);padding-top:16px;">
+          <label for="modal-waybill-count">Брой пътни листи</label>
+          <select id="modal-waybill-count" style="max-width:120px;">
+            <option value="0">0</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+          </select>
+        </div>
+        <div id="modal-waybills-container" style="margin-top:12px;"></div>
+
         <div id="modal-active-controls">
-          
-          <div class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 16px;">
-            <label style="font-weight: 700; color: var(--color-warning);">📝 Стъпка 1: Оперативно събитие / Промяна по време на път</label>
-            <div class="form-row" style="margin-top: 8px;">
-              <div>
-                <label for="modal-event-type">Тип промяна</label>
+          <div class="form-group" style="border-top:1px solid var(--border-color);padding-top:16px;margin-top:16px;">
+            <label style="font-weight:700;color:var(--color-warning);">Оперативно събитие</label>
+            <div class="form-row" style="margin-top:8px;">
+              <div><label for="modal-event-type">Тип промяна</label>
                 <select id="modal-event-type">
                   <option value="delay">Закъснение</option>
                   <option value="cancel">Отмяна на влак</option>
                   <option value="reassign">Преназначаване</option>
-                </select>
-              </div>
-              <div>
-                <label for="modal-event-reason">Причина за промяна</label>
+                </select></div>
+              <div><label for="modal-event-reason">Причина</label>
                 <select id="modal-event-reason">
                   <option value="Локомотивна повреда">Локомотивна повреда</option>
                   <option value="Закъснение на инфраструктурата">Закъснение на инфраструктурата</option>
                   <option value="Липса на състав">Липса на състав</option>
                   <option value="Превишено дежурство">Превишено дежурство</option>
                   <option value="Друга">Друга</option>
-                </select>
-              </div>
+                </select></div>
             </div>
-            <div style="margin-top: 10px;">
-              <label for="modal-event-note">Допълнително пояснение</label>
+            <div style="margin-top:10px;">
+              <label for="modal-event-note">Пояснение</label>
               <textarea id="modal-event-note" placeholder="Опишете накратко детайлите..." rows="2"></textarea>
             </div>
-            <button class="btn btn-secondary btn-sm" id="modal-save-event-btn" style="margin-top: 10px; width: 100%;">
-              ⚠️ Запиши само оперативното събитие
-            </button>
+            <button class="btn btn-secondary btn-sm" id="modal-save-event-btn" style="margin-top:10px;width:100%;">Запиши само оперативното събитие</button>
           </div>
-
-          <div class="form-group" style="border-top: 1px solid var(--border-color); padding-top: 16px; margin-top: 16px;">
-            <label style="font-weight: 700; color: var(--color-success);">🏁 Стъпка 2: Затваряне и Отчитане на смяната</label>
-            <div style="margin-top: 8px;">
-              <label for="modal-release-time">Реално време на освобождаване (Дата и час)</label>
+          <div class="form-group" style="border-top:1px solid var(--border-color);padding-top:16px;margin-top:16px;">
+            <label style="font-weight:700;color:var(--color-success);">Затваряне и отчитане на дежурството</label>
+            <div style="margin-top:8px;">
+              <label for="modal-release-time">Реално време на освобождаване (дата и час)</label>
               <input type="datetime-local" id="modal-release-time" required>
-              <span style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-top: 4px;">
-                * Това е критичната точка за автоматично стартиране на 16-часовата задължителна почивка!
-              </span>
             </div>
           </div>
         </div>
 
-        <!-- ИНФОРМАЦИЯ ЗА ЗАТВОРЕНА СМЯНА -->
-        <div id="modal-inactive-controls" style="display: none;">
-          <div class="glass" style="background: rgba(16,185,129,0.05); padding: 14px; border-radius: 10px; border-color: rgba(16,185,129,0.2);" id="modal-shift-history">
-            Смяната е приключена и часовете са отчетени в баланса на служителя.
+        <div id="modal-inactive-controls" style="display:none;">
+          <div class="glass" style="background:rgba(16,185,129,0.05);padding:14px;border-radius:10px;border-color:rgba(16,185,129,0.2);" id="modal-shift-history">
+            Дежурството е приключено и часовете са отчетени.
           </div>
         </div>
-
       </div>
-      <div class="panel-header" style="justify-content: flex-end; gap: 12px; border-top: 1px solid var(--border-color); padding: 16px 24px;">
-        <button class="btn btn-secondary" onclick="document.getElementById('shift-modal').classList.remove('active')">Отказ</button>
-        <button class="btn btn-primary" id="modal-start-shift-btn" style="display: none;">▶️ Начало на Смяната</button>
-        <button class="btn btn-success" id="modal-close-shift-btn">🏁 Затвори и Отчети Смяна</button>
+      <div class="panel-header" style="justify-content:flex-end;gap:12px;border-top:1px solid var(--border-color);padding:16px 24px;">
+        <button class="btn btn-secondary" onclick="closeShiftModal()">Отказ</button>
+        <button class="btn btn-primary" onclick="saveShiftModal()">💾 Запази</button>
+        <button class="btn btn-primary" id="modal-start-shift-btn" style="display:none;">Начало на смяната</button>
+        <button class="btn btn-success" id="modal-close-shift-btn">Затвори и отчети</button>
       </div>
     </div>
   </div>

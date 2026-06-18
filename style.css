@@ -389,6 +389,8 @@ main {
 }
 
 .legend-color.duty { background: var(--color-success); }
+.legend-color.duty-planned { background: rgba(16, 185, 129, 0.3); border: 1px solid rgba(16, 185, 129, 0.4); }
+.legend-color.duty-actual { background: #047857; border: 1px solid rgba(16, 185, 129, 0.5); }
 .legend-color.rest { background: var(--color-rest); }
 .legend-color.absence { background: var(--color-danger); }
 .legend-color.free { border: 1px solid var(--border-color); background: rgba(255,255,255,0.02); }
@@ -521,18 +523,6 @@ main {
   );
 }
 
-/* Маркер за ТЕКУЩО ВРЕМЕ */
-.current-time-marker {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--color-warning);
-  box-shadow: 0 0 8px var(--color-warning);
-  z-index: 10;
-  pointer-events: none;
-}
-
 /* Времеви блокове */
 .time-block {
   position: absolute;
@@ -561,6 +551,21 @@ main {
   background: linear-gradient(135deg, #0f766e, var(--color-success));
   border: 1px solid rgba(16, 185, 129, 0.3);
   box-shadow: 0 0 10px rgba(16, 185, 129, 0.15);
+}
+
+.time-block.duty-planned {
+  background: rgba(16, 185, 129, 0.2);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.time-block.duty-actual {
+  background: linear-gradient(135deg, #064e3b, #047857);
+  border: 1px solid rgba(16, 185, 129, 0.5);
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.15);
+}
+
+.time-block.duty-overlap {
+  border-style: dashed !important;
 }
 
 .time-block.rest {

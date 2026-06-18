@@ -236,8 +236,9 @@ const DEFAULT_SHIFTS = [
     driverId: "1001",
     trainId: "Влак 20611",
     appearancePlanned: "2026-05-22T08:00:00",
+    releasePlanned: "2026-05-22T12:00:00",
     appearanceActual: "2026-05-22T08:05:00",
-    releaseActual: "2026-05-22T12:15:00", // Завършена. Почива до 22 май, 12:15 + 16 часа = 23 май, 04:15.
+    releaseActual: "2026-05-22T12:15:00",
     status: "completed",
     actualDurationHours: 4.17,
     logs: [
@@ -249,8 +250,9 @@ const DEFAULT_SHIFTS = [
     driverId: "1003",
     trainId: "Влак 40402",
     appearancePlanned: "2026-05-22T13:00:00",
+    releasePlanned: "2026-05-22T17:00:00",
     appearanceActual: "2026-05-22T12:55:00",
-    releaseActual: null, // Активна смяна
+    releaseActual: null,
     status: "active",
     actualDurationHours: null,
     logs: [
@@ -262,8 +264,9 @@ const DEFAULT_SHIFTS = [
     driverId: "1005",
     trainId: "Влак 86012",
     appearancePlanned: "2026-05-21T20:00:00",
+    releasePlanned: "2026-05-22T00:00:00",
     appearanceActual: "2026-05-21T20:00:00",
-    releaseActual: "2026-05-22T01:30:00", // Свободен след 01:30 + 16ч = 17:30 на 22 май. Сега е 16:00, т.е. още е в почивка!
+    releaseActual: "2026-05-22T01:30:00",
     status: "completed",
     actualDurationHours: 5.5,
     logs: []
@@ -274,8 +277,9 @@ const DEFAULT_SHIFTS = [
     driverId: "1008",
     trainId: "Влак 20611",
     appearancePlanned: "2026-05-21T06:00:00",
+    releasePlanned: "2026-05-21T10:00:00",
     appearanceActual: "2026-05-21T06:00:00",
-    releaseActual: "2026-05-21T10:00:00", // Свободен
+    releaseActual: "2026-05-21T10:00:00",
     status: "completed",
     actualDurationHours: 4.0,
     logs: []

@@ -16,7 +16,8 @@ let state = {
   assigningCell: null,
   timelineDriverFilter: "",
   timelineViewMode: "24h",
-  timelineDate: getTodayDateStr()
+  timelineDate: getTodayDateStr(),
+  timelineMonthOffset: 0
 };
 
 // Зареждане на данни при стартиране
@@ -123,7 +124,18 @@ function initData() {
     saveToLocalStorage();
   }
 
+  migrateShiftData();
   state.timelineDate = getTodayDateStr();
+}
+
+function migrateShiftData() {
+  state.shifts.forEach(s => {
+    if (!s.releasePlanned) {
+      const train = state.trains.find(t => t.id === s.trainId);
+      const eta = train ? train.etaHours : 4;
+      s.releasePlanned = new Date(new Date(s.appearancePlanned).getTime() + eta * 60 * 60 * 1000).toISOString();
+    }
+  });
 }
 
 function saveToLocalStorage() {
@@ -377,13 +389,23 @@ function onAbsenceTypeChange() {
 // УПРАВЛЕНИЕ НА ДЕЖУРСТВАТА (СЪБИТИЯ)
 // ==========================================
 
+function getPlannedEnd(shift) {
+  if (shift.releasePlanned) return new Date(shift.releasePlanned);
+  const train = state.trains.find(t => t.id === shift.trainId);
+  const eta = train ? train.etaHours : 4;
+  return new Date(new Date(shift.appearancePlanned).getTime() + eta * 60 * 60 * 1000);
+}
+
 function createShift(driverId, trainId, appearancePlanned) {
   const train = state.trains.find(t => t.id === trainId);
+  const etaHours = train ? train.etaHours : 4;
+  const releasePlanned = new Date(new Date(appearancePlanned).getTime() + etaHours * 60 * 60 * 1000).toISOString();
   const newShift = {
     id: "shift_" + Date.now(),
     driverId,
     trainId,
     appearancePlanned,
+    releasePlanned,
     appearanceActual: null,
     releaseActual: null,
     status: "active",
@@ -537,49 +559,55 @@ function renderGanttTimeline() {
     const barsCell = document.createElement("div");
     barsCell.className = "timeline-bars-cell";
 
-    const marker = document.createElement("div");
-    marker.className = "current-time-marker";
-    const markerPos = (currentMinutes / (24 * 60)) * 100;
-    marker.style.left = `${markerPos}%`;
-    barsCell.appendChild(marker);
-
     const dayStart = new Date(`${selectedDateStr}T00:00:00`);
     const dayEnd = new Date(`${selectedDateStr}T23:59:59`);
 
     const driverDayShifts = state.shifts.filter(s => s.driverId === driver.id && s.status !== 'cancelled');
     
     driverDayShifts.forEach(shift => {
-      const appTime = new Date(shift.appearancePlanned);
-      
-      const startLimit = Math.max(appTime, dayStart);
-      const shiftEnd = shift.releaseActual ? new Date(shift.releaseActual) : getSimulatedDateTime();
-      const endLimit = Math.min(shiftEnd, dayEnd);
+      const actualBounds = getActualBounds(shift);
+      const isClosed = !!actualBounds;
 
-      if (startLimit < endLimit) {
-        const leftPercent = ((startLimit - dayStart) / (24 * 60 * 60 * 1000)) * 100;
-        const widthPercent = ((endLimit - startLimit) / (24 * 60 * 60 * 1000)) * 100;
+      const pStart = new Date(shift.appearancePlanned);
+      const pEnd = getPlannedEnd(shift);
+      const pStartLim = Math.max(pStart, dayStart);
+      const pEndLim = Math.min(pEnd, dayEnd);
 
-        const block = document.createElement("div");
-        block.className = "time-block duty";
-        block.style.left = `${leftPercent}%`;
-        block.style.width = `${widthPercent}%`;
-        
-        let label = shift.trainId;
-        if (shift.status === 'active') {
-          label += " (Активен)";
+      if (pStartLim < pEndLim) {
+        const left = ((pStartLim - dayStart) / (24 * 60 * 60 * 1000)) * 100;
+        const width = ((pEndLim - pStartLim) / (24 * 60 * 60 * 1000)) * 100;
+        const hrs = ((pEnd - pStart) / (60 * 60 * 1000)).toFixed(1);
+
+        const b = document.createElement("div");
+        b.className = "time-block duty-planned";
+        if (isClosed) b.classList.add("duty-overlap");
+        b.style.left = left + "%";
+        b.style.width = width + "%";
+        b.innerHTML = `<span class="block-title">План: ${shift.trainId}</span><span class="block-time">${formatTime(pStart)} - ${formatTime(pEnd)} (${hrs}ч)</span>`;
+        b.addEventListener("click", (e) => { e.stopPropagation(); openShiftManagementModal(shift); });
+        barsCell.appendChild(b);
+      }
+
+      if (isClosed) {
+        const aStart = actualBounds.start;
+        const aEnd = actualBounds.end;
+        const aStartLim = Math.max(aStart, dayStart);
+        const aEndLim = Math.min(aEnd, dayEnd);
+
+        if (aStartLim < aEndLim) {
+          const left = ((aStartLim - dayStart) / (24 * 60 * 60 * 1000)) * 100;
+          const width = ((aEndLim - aStartLim) / (24 * 60 * 60 * 1000)) * 100;
+          const hrs = shift.actualDurationHours || ((aEnd - aStart) / (60 * 60 * 1000));
+
+          const b = document.createElement("div");
+          b.className = "time-block duty-actual";
+          b.style.left = left + "%";
+          b.style.width = width + "%";
+          b.style.zIndex = "2";
+          b.innerHTML = `<span class="block-title">Факт: ${shift.trainId}</span><span class="block-time">${formatTime(aStart)} - ${formatTime(aEnd)} (${typeof hrs === 'number' ? hrs.toFixed(1) : hrs}ч)</span>`;
+          b.addEventListener("click", (e) => { e.stopPropagation(); openShiftManagementModal(shift); });
+          barsCell.appendChild(b);
         }
-        
-        block.innerHTML = `
-          <span class="block-title">${label}</span>
-          <span class="block-time">${formatTime(appTime)} - ${shift.releaseActual ? formatTime(shift.releaseActual) : "сега"}</span>
-        `;
-
-        block.addEventListener("click", (e) => {
-          e.stopPropagation();
-          openShiftManagementModal(shift);
-        });
-
-        barsCell.appendChild(block);
       }
 
       if (shift.releaseActual) {
@@ -682,18 +710,34 @@ function populateTimelineDriverFilter() {
   if (currentVal) sel.value = currentVal;
 }
 
-// Актуализиране на заглавието на времевата линия
+function getTimelineDateParts() {
+  const now = new Date();
+  const m = now.getMonth() + state.timelineMonthOffset;
+  return { year: now.getFullYear() + Math.floor(m / 12), month: ((m % 12) + 12) % 12 };
+}
+
+function prevTimelineMonth() { state.timelineMonthOffset--; syncTimelineDateToOffset(); updateUI(); }
+function nextTimelineMonth() { state.timelineMonthOffset++; syncTimelineDateToOffset(); updateUI(); }
+
+function syncTimelineDateToOffset() {
+  const { year, month } = getTimelineDateParts();
+  const day = Math.min(parseInt(state.timelineDate.split('-')[2]) || 1, new Date(year, month + 1, 0).getDate());
+  state.timelineDate = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+}
+
 function updateTimelineTitle() {
   const titleEl = document.getElementById("timeline-title");
   if (!titleEl) return;
+  const bgMonths = ["Януари","Февруари","Март","Април","Май","Юни","Юли","Август","Септември","Октомври","Ноември","Декември"];
   if (state.timelineViewMode === "24h") {
     const d = new Date(state.timelineDate);
-    const bgMonths = ["Януари","Февруари","Март","Април","Май","Юни","Юли","Август","Септември","Октомври","Ноември","Декември"];
     titleEl.textContent = `24-часов графичен поглед — ${d.getDate()} ${bgMonths[d.getMonth()]} ${d.getFullYear()}г.`;
   } else {
     const now = new Date();
-    const bgMonths = ["Януари","Февруари","Март","Април","Май","Юни","Юли","Август","Септември","Октомври","Ноември","Декември"];
-    titleEl.textContent = `Месечен календар — ${bgMonths[now.getMonth()]} ${now.getFullYear()}г.`;
+    const m = now.getMonth() + calendarMonthOffset;
+    const y = now.getFullYear() + Math.floor(m / 12);
+    const mo = ((m % 12) + 12) % 12;
+    titleEl.textContent = `Месечен календар — ${bgMonths[mo]} ${y}г.`;
   }
 }
 
@@ -706,15 +750,13 @@ function updateTimelineDateSlider() {
 
   if (state.timelineViewMode === "24h") {
     if (wrapper) wrapper.style.display = "flex";
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth();
+    const { year, month } = getTimelineDateParts();
+    const bgMonths = ["Януари","Февруари","Март","Април","Май","Юни","Юли","Август","Септември","Октомври","Ноември","Декември"];
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     slider.min = 1;
     slider.max = daysInMonth;
-    const currentDay = parseInt(state.timelineDate.split('-')[2]) || now.getDate();
+    const currentDay = parseInt(state.timelineDate.split('-')[2]) || 1;
     slider.value = Math.min(currentDay, daysInMonth);
-    const bgMonths = ["Януари","Февруари","Март","Април","Май","Юни","Юли","Август","Септември","Октомври","Ноември","Декември"];
     const d = new Date(year, month, parseInt(slider.value));
     label.textContent = `${d.getDate()} ${bgMonths[d.getMonth()]} ${d.getFullYear()}г.`;
   } else {
@@ -723,19 +765,32 @@ function updateTimelineDateSlider() {
 }
 
 // Рендиране на месечен календар
+let calendarMonthOffset = 0;
+
+function prevCalendarMonth() { calendarMonthOffset--; renderMonthCalendar(); }
+function nextCalendarMonth() { calendarMonthOffset++; renderMonthCalendar(); }
+
 function renderMonthCalendar() {
   const container = document.getElementById("month-calendar");
   if (!container) return;
 
   const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth();
-  const today = now.getDate();
+  const year = now.getFullYear() + Math.floor((now.getMonth() + calendarMonthOffset) / 12);
+  const month = ((now.getMonth() + calendarMonthOffset) % 12 + 12) % 12;
+  const today = (calendarMonthOffset === 0) ? now.getDate() : 0;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const firstDayOfWeek = new Date(year, month, 1).getDay();
   const bgDays = ["Пон","Вто","Сря","Чет","Пет","Съб","Нед"];
+  const bgMonths = ["Януари","Февруари","Март","Април","Май","Юни","Юли","Август","Септември","Октомври","Ноември","Декември"];
 
   container.innerHTML = "";
+
+  const navRow = document.createElement("div");
+  navRow.style.cssText = "display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;";
+  navRow.innerHTML = `<button class="btn btn-sm" onclick="prevCalendarMonth()">&larr; ${bgMonths[(month+11)%12]}</button>
+    <span style="font-weight:700;font-size:1.1rem;">${bgMonths[month]} ${year}г.</span>
+    <button class="btn btn-sm" onclick="nextCalendarMonth()">${bgMonths[(month+1)%12]} &rarr;</button>`;
+  container.appendChild(navRow);
 
   const header = document.createElement("div");
   header.className = "month-calendar-header";
@@ -750,7 +805,6 @@ function renderMonthCalendar() {
   const grid = document.createElement("div");
   grid.className = "month-calendar-grid";
 
-  // Празни клетки за първите дни
   const startOffset = firstDayOfWeek === 0 ? 6 : firstDayOfWeek - 1;
   for (let i = 0; i < startOffset; i++) {
     const empty = document.createElement("div");
@@ -761,7 +815,7 @@ function renderMonthCalendar() {
   for (let day = 1; day <= daysInMonth; day++) {
     const cell = document.createElement("div");
     cell.className = "calendar-cell";
-    if (day === today) cell.classList.add("today");
+    if (day === today && calendarMonthOffset === 0) cell.classList.add("today");
 
     const dayStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const dayStart = new Date(`${dayStr}T00:00:00`);
@@ -856,6 +910,7 @@ function renderMonthCalendar() {
 
     cell.addEventListener("click", () => {
       state.timelineDate = dayStr;
+      state.timelineMonthOffset = calendarMonthOffset;
       state.timelineViewMode = "24h";
       updateUI();
     });
@@ -1450,91 +1505,194 @@ function openSchedulingFormForDriver(driverId) {
 }
 
 // Отваряне на модален прозорец за управление на активна / приключена смяна
+function computeWaybillDuration(waybills) {
+  if (!waybills || waybills.length === 0) return 0;
+  return waybills.reduce((sum, wb) => {
+    if (wb.start && wb.end) {
+      return sum + Math.max(0, (new Date(wb.end) - new Date(wb.start)) / (60 * 60 * 1000));
+    }
+    return sum;
+  }, 0);
+}
+
+function getActualBounds(shift) {
+  if (shift.waybills && shift.waybills.length > 0) {
+    const starts = shift.waybills.filter(w => w.start).map(w => new Date(w.start));
+    const ends = shift.waybills.filter(w => w.end).map(w => new Date(w.end));
+    if (starts.length > 0 && ends.length > 0) {
+      const minStart = new Date(Math.min(...starts));
+      const totalHrs = computeWaybillDuration(shift.waybills);
+      return { start: minStart, end: new Date(minStart.getTime() + totalHrs * 60 * 60 * 1000) };
+    }
+  }
+  if (shift.appearanceActual && shift.releaseActual) {
+    return { start: new Date(shift.appearanceActual), end: new Date(shift.releaseActual) };
+  }
+  return null;
+}
+
+function renderWaybills(container, list) {
+  container.innerHTML = "";
+  if (!list || list.length === 0) {
+    container.innerHTML = '<div style="color:var(--text-muted);font-size:0.85rem;padding:8px 0;">Няма добавени пътни листи.</div>';
+    return;
+  }
+  const nowVal = new Date().toISOString().slice(0, 16);
+  list.forEach((wb, i) => {
+    const d = document.createElement("div");
+    d.style.cssText = "background:rgba(0,0,0,0.1);padding:12px;border-radius:8px;margin-bottom:8px;";
+    d.innerHTML = `<div style="font-weight:600;margin-bottom:8px;font-size:0.85rem;">Пътен лист ${i+1}</div>
+      <div class="form-row">
+        <div><label style="font-size:0.75rem;">Начало (дата и час)</label>
+          <input type="datetime-local" class="wb-start" value="${wb.start ? wb.start.slice(0,16) : nowVal}"></div>
+        <div><label style="font-size:0.75rem;">Край (дата и час)</label>
+          <input type="datetime-local" class="wb-end" value="${wb.end ? wb.end.slice(0,16) : nowVal}"></div>
+      </div>`;
+    container.appendChild(d);
+  });
+  container.querySelectorAll("input").forEach(inp => inp.addEventListener("input", updateWaybillDurationDisplay));
+}
+
+function updateWaybillDurationDisplay() {
+  const starts = document.querySelectorAll("#modal-waybills-container .wb-start");
+  const ends = document.querySelectorAll("#modal-waybills-container .wb-end");
+  const waybills = [];
+  for (let i = 0; i < starts.length; i++) {
+    waybills.push({
+      start: starts[i].value ? new Date(starts[i].value).toISOString() : null,
+      end: ends[i].value ? new Date(ends[i].value).toISOString() : null
+    });
+  }
+  const totalHrs = computeWaybillDuration(waybills);
+  const el = document.getElementById("modal-shift-actual-dur");
+  if (totalHrs > 0) el.textContent = totalHrs.toFixed(1) + "ч (от пътни листи)";
+  else el.textContent = "-";
+}
+
+function saveWaybills(shift) {
+  const n = parseInt(document.getElementById("modal-waybill-count").value);
+  const starts = document.querySelectorAll("#modal-waybills-container .wb-start");
+  const ends = document.querySelectorAll("#modal-waybills-container .wb-end");
+  shift.waybills = [];
+  for (let i = 0; i < n; i++) {
+    shift.waybills.push({
+      start: starts[i] && starts[i].value ? new Date(starts[i].value).toISOString() : null,
+      end: ends[i] && ends[i].value ? new Date(ends[i].value).toISOString() : null
+    });
+  }
+  const wbHrs = computeWaybillDuration(shift.waybills);
+  if (wbHrs > 0) shift.actualDurationHours = wbHrs;
+}
+
+function closeShiftModal() {
+  const m = document.getElementById("shift-modal");
+  if (m._shift) { saveWaybills(m._shift); saveToLocalStorage(); m._shift = null; }
+  m.classList.remove("active");
+}
+
+function saveShiftModal() {
+  const m = document.getElementById("shift-modal");
+  if (m._shift) { saveWaybills(m._shift); saveToLocalStorage(); showToast("Промените са запазени.", "success"); }
+}
+
 function openShiftManagementModal(shift) {
   const overlay = document.getElementById("shift-modal");
   const driver = state.drivers.find(d => d.id === shift.driverId);
   const train = state.trains.find(t => t.id === shift.trainId);
+  overlay._shift = shift;
 
-  document.getElementById("modal-shift-title").textContent = `Управление на смяна: ${shift.trainId}`;
+  document.getElementById("modal-shift-title").textContent = "Отчитане на дежурство: " + shift.trainId;
   document.getElementById("modal-shift-driver").textContent = driver ? driver.name : "Неизвестен";
   document.getElementById("modal-shift-route").textContent = train ? train.route : "-";
-  document.getElementById("modal-shift-planned").textContent = formatDate(shift.appearancePlanned);
-  document.getElementById("modal-shift-actual").textContent = formatDate(shift.appearanceActual || "Не се е явил");
-  
-  // Бутони и контроли спрямо статуса
-  const activeControls = document.getElementById("modal-active-controls");
-  const inactiveControls = document.getElementById("modal-inactive-controls");
-  const closeBtn = document.getElementById("modal-close-shift-btn");
-  const saveEventBtn = document.getElementById("modal-save-event-btn");
 
-  // Нулиране на стойности
+  const pHrs = ((getPlannedEnd(shift) - new Date(shift.appearancePlanned)) / (60 * 60 * 1000)).toFixed(1);
+  document.getElementById("modal-shift-planned-dur").textContent = pHrs + "ч";
+
+  if (!shift.waybills) shift.waybills = [];
+
+  const wbHrs = computeWaybillDuration(shift.waybills);
+  let aHrs = "-";
+  if (wbHrs > 0) aHrs = wbHrs.toFixed(1) + "ч (от пътни листи)";
+  else if (shift.appearanceActual && shift.releaseActual) {
+    const s = new Date(shift.appearanceActual), e = new Date(shift.releaseActual);
+    const h = shift.actualDurationHours || (e - s) / (60 * 60 * 1000);
+    aHrs = (typeof h === 'number' ? h.toFixed(1) : h) + "ч";
+  }
+  document.getElementById("modal-shift-actual-dur").textContent = aHrs;
+
+  const wbSel = document.getElementById("modal-waybill-count");
+  const wbBox = document.getElementById("modal-waybills-container");
+  wbSel.value = shift.waybills.length + "";
+  renderWaybills(wbBox, shift.waybills);
+
+  wbSel.onchange = function () {
+    const n = parseInt(this.value);
+    while (shift.waybills.length < n) shift.waybills.push({ start: null, end: null });
+    while (shift.waybills.length > n) shift.waybills.pop();
+    renderWaybills(wbBox, shift.waybills);
+  };
+
+  const act = document.getElementById("modal-active-controls");
+  const inact = document.getElementById("modal-inactive-controls");
+  const closeBtn = document.getElementById("modal-close-shift-btn");
+  const evtBtn = document.getElementById("modal-save-event-btn");
+
   document.getElementById("modal-release-time").value = getSimulatedDateTime().toISOString().slice(0, 16);
   document.getElementById("modal-event-type").value = "delay";
   document.getElementById("modal-event-reason").value = "Локомотивна повреда";
   document.getElementById("modal-event-note").value = "";
 
-  if (shift.status === 'active') {
-    activeControls.style.display = "block";
-    inactiveControls.style.display = "none";
+  if (shift.status === "active") {
+    act.style.display = "block";
+    inact.style.display = "none";
     closeBtn.style.display = "inline-flex";
-    
-    // Ако не се е явил още реално, позволяваме да започне смяната
+
     const startBtn = document.getElementById("modal-start-shift-btn");
     if (!shift.appearanceActual) {
       startBtn.style.display = "inline-flex";
-      startBtn.onclick = () => {
+      startBtn.onclick = function () {
+        saveWaybills(shift);
         startShift(shift.id, getSimulatedDateTime().toISOString());
         overlay.classList.remove("active");
+        overlay._shift = null;
         updateUI();
       };
     } else {
       startBtn.style.display = "none";
     }
 
-    closeBtn.onclick = () => {
-      const relTime = document.getElementById("modal-release-time").value;
-      if (!relTime) {
-        showToast("Моля, въведете време на освобождаване!", "error");
-        return;
-      }
-      
-      // Действително време на явяване се проверява
-      if (!shift.appearanceActual) {
-        // Ако не се е явил реално, записваме явяването като планираното
-        shift.appearanceActual = shift.appearancePlanned;
-      }
-
-      const releaseISO = new Date(relTime).toISOString();
-      if (new Date(releaseISO) < new Date(shift.appearanceActual)) {
+    closeBtn.onclick = function () {
+      const t = document.getElementById("modal-release-time").value;
+      if (!t) { showToast("Моля, въведете време на освобождаване!", "error"); return; }
+      if (!shift.appearanceActual) shift.appearanceActual = shift.appearancePlanned;
+      const iso = new Date(t).toISOString();
+      if (new Date(iso) < new Date(shift.appearanceActual)) {
         showToast("Времето на освобождаване не може да е преди явяването!", "error");
         return;
       }
-
-      closeShift(shift.id, releaseISO);
+      saveWaybills(shift);
+      closeShift(shift.id, iso);
       overlay.classList.remove("active");
+      overlay._shift = null;
       updateUI();
     };
 
-    saveEventBtn.onclick = () => {
-      const type = document.getElementById("modal-event-type").value;
-      const reason = document.getElementById("modal-event-reason").value;
-      const note = document.getElementById("modal-event-note").value;
-      
-      logOperationalEvent(shift.id, type, reason, note);
+    evtBtn.onclick = function () {
+      const tp = document.getElementById("modal-event-type").value;
+      const r = document.getElementById("modal-event-reason").value;
+      const n = document.getElementById("modal-event-note").value;
+      logOperationalEvent(shift.id, tp, r, n);
       overlay.classList.remove("active");
+      overlay._shift = null;
       updateUI();
     };
-
   } else {
-    activeControls.style.display = "none";
-    inactiveControls.style.display = "block";
+    act.style.display = "none";
+    inact.style.display = "block";
     closeBtn.style.display = "none";
-    
-    let historyHTML = `<strong>История на събитията:</strong><br>`;
-    shift.logs.forEach(log => {
-      historyHTML += `• <span style="font-family:var(--font-mono)">[${formatTime(log.time)}]</span> ${log.text}<br>`;
-    });
-    document.getElementById("modal-shift-history").innerHTML = historyHTML;
+    let h = "<strong>История на събитията:</strong><br>";
+    shift.logs.forEach(l => { h += "• <span style='font-family:var(--font-mono)'>[" + formatTime(l.time) + "]</span> " + l.text + "<br>"; });
+    document.getElementById("modal-shift-history").innerHTML = h;
   }
 
   overlay.classList.add("active");
@@ -2340,9 +2498,6 @@ document.addEventListener("DOMContentLoaded", () => {
       viewToggles.forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
       state.timelineViewMode = btn.dataset.view;
-      if (state.timelineViewMode === "24h") {
-        state.timelineDate = getTodayDateStr();
-      }
       updateUI();
     });
   });
@@ -2350,14 +2505,17 @@ document.addEventListener("DOMContentLoaded", () => {
   const dateSlider = document.getElementById("timeline-date-slider");
   if (dateSlider) {
     dateSlider.addEventListener("input", () => {
-      const now = new Date();
-      const year = now.getFullYear();
-      const month = now.getMonth();
+      const { year, month } = getTimelineDateParts();
       const day = parseInt(dateSlider.value);
       state.timelineDate = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
       updateUI();
     });
   }
+
+  const prevMonthBtn = document.getElementById("prev-month-btn");
+  const nextMonthBtn = document.getElementById("next-month-btn");
+  if (prevMonthBtn) prevMonthBtn.addEventListener("click", prevTimelineMonth);
+  if (nextMonthBtn) nextMonthBtn.addEventListener("click", nextTimelineMonth);
 
   // Слушатели за формата за планиране
   const driverSelect = document.getElementById("shift-driver-select");
