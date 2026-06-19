@@ -17,7 +17,8 @@ let state = {
   timelineDriverFilter: "",
   timelineViewMode: "24h",
   timelineDate: getTodayDateStr(),
-  timelineMonthOffset: 0
+  timelineMonthOffset: 0,
+  assignationsDate: ""
 };
 
 // Зареждане на данни при стартиране
@@ -126,6 +127,13 @@ function initData() {
 
   migrateShiftData();
   state.timelineDate = getTodayDateStr();
+  
+  const tomorrow = new Date(getTodayDateStr());
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth()+1).padStart(2,'0')}-${String(tomorrow.getDate()).padStart(2,'0')}`;
+  state.assignationsDate = state.assignationsDate || tomorrowStr;
+  state.assignations.forEach(a => { if (!a.date) a.date = tomorrowStr; });
+  saveToLocalStorage();
 }
 
 function migrateShiftData() {
@@ -1452,40 +1460,6 @@ function renderTrainTemplates() {
   });
 }
 
-// Рендиране на последните оперативни логове на главния екран
-function renderRecentLogs() {
-  const container = document.getElementById("operational-logs-list");
-  if (!container) return;
-
-  container.innerHTML = "";
-
-  // Обединяваме всички логове от всички смени
-  let allLogs = [];
-  state.shifts.forEach(shift => {
-    const driver = state.drivers.find(d => d.id === shift.driverId);
-    shift.logs.forEach(log => {
-      allLogs.push({
-        time: log.time,
-        type: log.type || 'info',
-        text: `[${driver ? driver.name.split(' ')[0] : 'Машинист'} - ${shift.trainId}] ${log.text}`
-      });
-    });
-  });
-
-  // Сортиране по време низходящо
-  allLogs.sort((a,b) => new Date(b.time) - new Date(a.time));
-
-  allLogs.slice(0, 10).forEach(log => {
-    const div = document.createElement("div");
-    div.className = `log-item ${log.type}`;
-    div.innerHTML = `
-      <span class="log-text">${log.text}</span>
-      <span class="log-time">${formatTime(log.time)}</span>
-    `;
-    container.appendChild(div);
-  });
-}
-
 // ==========================================
 // СЪБИТИЯ И КОНТРОЛИ НА ИНТЕРФЕЙСА
 // ==========================================
@@ -2165,6 +2139,7 @@ function deleteAbsence(driverId, absenceId) {
 function addAssignationRow() {
   state.assignations.push({
     id: "asgn_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+    date: state.assignationsDate,
     time: "05:00",
     location: "",
     trainId: "",
@@ -2185,25 +2160,40 @@ function removeAssignationRow(id) {
   }
 }
 
+function prevAssignationsDay() {
+  const d = new Date(state.assignationsDate);
+  d.setDate(d.getDate() - 1);
+  state.assignationsDate = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  renderAssignationsTable();
+}
+
+function nextAssignationsDay() {
+  const d = new Date(state.assignationsDate);
+  d.setDate(d.getDate() + 1);
+  state.assignationsDate = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  renderAssignationsTable();
+}
+
 function renderAssignationsTable() {
   const tbody = document.getElementById("assignations-body");
   if (!tbody) return;
 
   const nextDayEl = document.getElementById("assignations-date");
   if (nextDayEl) {
-    const nextDate = new Date(getTodayDateStr());
-    nextDate.setDate(nextDate.getDate() + 1);
+    const d = new Date(state.assignationsDate);
     const bgMonths = ["Януари","Февруари","Март","Април","Май","Юни","Юли","Август","Септември","Октомври","Ноември","Декември"];
-    nextDayEl.textContent = `${nextDate.getDate()} ${bgMonths[nextDate.getMonth()]} ${nextDate.getFullYear()}г.`;
+    nextDayEl.textContent = `${d.getDate()} ${bgMonths[d.getMonth()]} ${d.getFullYear()}г.`;
   }
 
+  const filtered = state.assignations.filter(a => a.date === state.assignationsDate);
+
   tbody.innerHTML = "";
-  if (state.assignations.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:24px;font-size:0.85rem;">Все още няма заявени влакове. Натиснете "+ Добави ред"</td></tr>';
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:24px;font-size:0.85rem;">Няма заявени влакове за тази дата.</td></tr>';
     return;
   }
 
-  state.assignations.forEach((a, i) => {
+  filtered.forEach((a, i) => {
     const tr = document.createElement("tr");
     const driverLabel = a.driverId
       ? `${a.driverId}`
@@ -2214,7 +2204,7 @@ function renderAssignationsTable() {
     const driverIncompetent = a.driverId && a.trainId && !hasCompetencyForTrain(a.driverId, a.trainId);
     const asstIncompetent = a.assistantId && a.trainId && !hasCompetencyForTrain(a.assistantId, a.trainId);
     const first = i === 0;
-    const last = i === state.assignations.length - 1;
+    const last = i === filtered.length - 1;
 
     tr.innerHTML = `
       <td><input type="time" value="${a.time}" data-id="${a.id}" class="asgn-time-input"></td>
@@ -2296,11 +2286,14 @@ function renderAssignationsTable() {
     btn.addEventListener("click", e => {
       const id = e.currentTarget.dataset.id;
       const dir = e.currentTarget.dataset.dir;
-      const idx = state.assignations.findIndex(a => a.id === id);
+      const filtered = state.assignations.filter(a => a.date === state.assignationsDate);
+      const idx = filtered.findIndex(a => a.id === id);
       if (idx === -1) return;
       const swapIdx = dir === "up" ? idx - 1 : idx + 1;
-      if (swapIdx < 0 || swapIdx >= state.assignations.length) return;
-      [state.assignations[idx], state.assignations[swapIdx]] = [state.assignations[swapIdx], state.assignations[idx]];
+      if (swapIdx < 0 || swapIdx >= filtered.length) return;
+      const realIdx = state.assignations.indexOf(filtered[idx]);
+      const realSwapIdx = state.assignations.indexOf(filtered[swapIdx]);
+      [state.assignations[realIdx], state.assignations[realSwapIdx]] = [state.assignations[realSwapIdx], state.assignations[realIdx]];
       saveToLocalStorage();
       renderAssignationsTable();
     });
@@ -2384,7 +2377,6 @@ function updateUI() {
   renderCrewProfiles();
   renderTrainsManagement();
   renderTrainTemplates();
-  renderRecentLogs();
 
   let totalDrivers = state.drivers.length;
   let availableDrivers = 0;

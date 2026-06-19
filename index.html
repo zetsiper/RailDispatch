@@ -192,7 +192,12 @@
           <!-- Заявени влакове за дата -->
           <div class="glass assignations-panel" style="display: flex; flex-direction: column;">
             <div class="panel-header">
-              <h3>Заявени влакове за дата: <span id="assignations-date">23 Май 2026г.</span></h3>
+              <h3>Заявени влакове за дата: <span id="assignations-date">23 Май 2026г.</span>
+                <span style="margin-left:8px;gap:4px;display:inline-flex;">
+                  <button class="btn btn-sm" onclick="prevAssignationsDay()" title="Предишен ден">&larr;</button>
+                  <button class="btn btn-sm" onclick="nextAssignationsDay()" title="Следващ ден">&rarr;</button>
+                </span>
+              </h3>
             </div>
             <div class="panel-body" style="flex-grow: 1;">
               <div class="assignations-table-wrapper">
@@ -272,18 +277,7 @@
           </div>
 
         </div>
-
-        <!-- Наскоро затворени/активни смени логинг на събития -->
-        <div class="glass" style="margin-top: 24px;">
-          <div class="panel-header">
-            <h3>Активни събития и оперативен лог</h3>
-          </div>
-          <div class="panel-body">
-            <div class="logs-list" id="operational-logs-list">
-              <!-- Извеждане на събитията -->
-            </div>
-          </div>
-        </div>
+        
       </div>
 
       <!-- ============================================== -->
